@@ -1,4 +1,6 @@
-const puppeteerCore = require('puppeteer-core');
+const puppeteerExtra = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteerExtra.use(StealthPlugin());
 
 const USD_TO_CAD = 1.36;
 const DELAY_BETWEEN_SITES_MS = 5000;
@@ -27,7 +29,7 @@ async function launchBrowser() {
   try {
     const chromium = require('@sparticuz/chromium');
     const execPath = await chromium.executablePath();
-    return await puppeteerCore.launch({
+    return await puppeteerExtra.launch({
       args: [...chromium.args, ...args],
       defaultViewport: { width: 1280, height: 800 },
       executablePath: execPath,
@@ -43,7 +45,7 @@ async function launchBrowser() {
     ];
     for (const execPath of localPaths) {
       try {
-        return await puppeteerCore.launch({ args, executablePath: execPath, headless: true, ignoreHTTPSErrors: true });
+        return await puppeteerExtra.launch({ args, executablePath: execPath, headless: true, ignoreHTTPSErrors: true });
       } catch { /* try next */ }
     }
     throw new Error('No Chrome/Chromium found.');
@@ -182,21 +184,38 @@ async function scrapeStubHub(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(meta.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await sleep(2000);
+    // networkidle2 + long wait gives stealth time to pass JS challenge
+    await page.goto(meta.url, { waitUntil: 'networkidle2', timeout: 40000 });
+    await sleep(5000);
+
     if (await isBlocked(page)) {
       return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
     }
+
+    // JSON-LD first
+    const html = await page.content();
+    const jsonLdPrice = extractJsonLdPrice(html);
+    if (jsonLdPrice) {
+      return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+
     const texts = await page.evaluate(() => {
       const found = [];
-      for (const sel of ['[data-testid*="price"]', '[class*="price"]', '[class*="Price"]']) {
+      for (const sel of [
+        '[data-testid*="price"]', '[class*="price"]', '[class*="Price"]',
+        '[class*="ticket"]', '[class*="listing"]', '.price',
+      ]) {
         for (const el of document.querySelectorAll(sel)) {
           const t = el.textContent.trim();
           if (t.includes('$') && /\d/.test(t)) found.push(t);
         }
       }
+      // Broad sweep
+      const broad = document.body.innerText.match(/\$\s*[\d,]+(?:\.\d{2})?/g) || [];
+      found.push(...broad.slice(0, 20));
       return found;
     });
+
     const price = extractLowestPrice(texts);
     return { ...meta, price, status: price ? 'available' : 'unavailable', note: price ? null : 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
   } catch (err) {
@@ -260,21 +279,36 @@ async function scrapeViagogo(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(meta.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await sleep(2000);
+    await page.goto(meta.url, { waitUntil: 'networkidle2', timeout: 40000 });
+    await sleep(5000);
+
     if (await isBlocked(page)) {
       return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
     }
+
+    // JSON-LD first
+    const html = await page.content();
+    const jsonLdPrice = extractJsonLdPrice(html);
+    if (jsonLdPrice) {
+      return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+
     const texts = await page.evaluate(() => {
       const found = [];
-      for (const sel of ['[class*="price"]', '[class*="Price"]', '[data-qa*="price"]']) {
+      for (const sel of [
+        '[class*="price"]', '[class*="Price"]', '[data-qa*="price"]',
+        '[class*="ticket"]', '[class*="listing"]',
+      ]) {
         for (const el of document.querySelectorAll(sel)) {
           const t = el.textContent.trim();
           if (t.includes('$') && /\d/.test(t)) found.push(t);
         }
       }
+      const broad = document.body.innerText.match(/\$\s*[\d,]+(?:\.\d{2})?/g) || [];
+      found.push(...broad.slice(0, 20));
       return found;
     });
+
     const price = extractLowestPrice(texts);
     return { ...meta, price, status: price ? 'available' : 'unavailable', note: price ? null : 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
   } catch (err) {
