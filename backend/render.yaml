@@ -12,7 +12,7 @@ services:
         value: production
       - key: RENDER_URL
         # Replace with your actual Render service URL after first deploy  ← UPDATE THIS
-        value: https://toronto-ticket-tracker.onrender.com
+        value: https://ticket-price-monitor.onrender.com
       - key: FRONTEND_URL
         # Replace with your GitHub Pages URL after enabling Pages        ← UPDATE THIS
         value: https://your-username.github.io
