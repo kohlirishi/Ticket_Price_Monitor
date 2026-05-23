@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Toronto Ticket Tracker</title>
+  <style>
+    /* ── Tokens ──────────────────────────────────────────── */
+    :root[data-theme="dark"] {
+      --bg:          #0a0a0f;
+      --card:        #13131f;
+      --card2:       #1a1a2a;
+      --border:      #252538;
+      --text:        #e8e8f2;
+      --muted:       #7878a0;
+      --accent:      #00d4aa;
+      --accent-dim:  rgba(0,212,170,.14);
+      --gold:        #ffd700;
+      --gold-dim:    rgba(255,215,0,.13);
+      --green:       #00c896;
+      --green-dim:   rgba(0,200,150,.12);
+      --red:         #ff4466;
+      --red-dim:     rgba(255,68,102,.12);
+      --shadow:      0 4px 28px rgba(0,0,0,.45);
+      --sh-from:     #1c1c2e;
+      --sh-to:       #262638;
+    }
+    :root[data-theme="light"] {
+      --bg:          #f0f2f8;
+      --card:        #ffffff;
+      --card2:       #f6f8fc;
+      --border:      #dde2ef;
+      --text:        #18182e;
+      --muted:       #6060a0;
+      --accent:      #007f6a;
+      --accent-dim:  rgba(0,127,106,.12);
+      --gold:        #b8860b;
+      --gold-dim:    rgba(184,134,11,.12);
+      --green:       #006f56;
+      --green-dim:   rgba(0,111,86,.1);
+      --red:         #cc2244;
+      --red-dim:     rgba(204,34,68,.1);
+      --shadow:      0 4px 20px rgba(0,0,0,.08);
+      --sh-from:     #e4e8f4;
+      --sh-to:       #d4d8e8;
+    }
+
+    /* ── Reset ───────────────────────────────────────────── */
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:var(--bg);color:var(--text);min-height:100vh;
+      transition:background .25s,color .25s;
+    }
+    a{color:inherit;text-decoration:none}
+
+    /* ── Header ──────────────────────────────────────────── */
+    .hdr{
+      background:var(--card);border-bottom:1px solid var(--border);
+      padding:14px 22px;display:flex;align-items:center;
+      justify-content:space-between;position:sticky;top:0;z-index:90;
+      box-shadow:var(--shadow);
+    }
+    .hdr-l{display:flex;align-items:center;gap:12px}
+    .logo{width:42px;height:42px;flex-shrink:0}
+    .hdr-title{
+      font-size:1.25rem;font-weight:800;
+      background:linear-gradient(130deg,var(--accent),var(--gold));
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+    }
+    .hdr-sub{font-size:.72rem;color:var(--muted);margin-top:2px}
+    .theme-btn{
+      background:var(--card2);border:1px solid var(--border);
+      border-radius:20px;padding:6px 14px;cursor:pointer;
+      font-size:.82rem;color:var(--text);display:flex;
+      align-items:center;gap:6px;transition:all .2s;
+    }
+    .theme-btn:hover{background:var(--accent-dim);border-color:var(--accent)}
+
+    /* ── Main ────────────────────────────────────────────── */
+    .main{max-width:1120px;margin:0 auto;padding:24px 16px}
+
+    /* ── Connection error ────────────────────────────────── */
+    .conn-err{
+      background:var(--red-dim);border:1px solid var(--red);
+      border-radius:10px;padding:12px 16px;margin-bottom:16px;
+      font-size:.85rem;color:var(--red);display:none;
+    }
+    .conn-err.show{display:block}
+
+    /* ── Add-event panel ─────────────────────────────────── */
+    .add-panel{
+      background:var(--card);border:1px solid var(--border);
+      border-radius:16px;padding:22px;margin-bottom:24px;
+      box-shadow:var(--shadow);
+    }
+    .panel-title{
+      font-size:.95rem;font-weight:700;margin-bottom:16px;
+      display:flex;align-items:center;gap:10px;
+    }
+    .panel-title::before{
+      content:'';width:3px;height:18px;
+      background:var(--accent);border-radius:2px;flex-shrink:0;
+    }
+    .form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+    .fg{display:flex;flex-direction:column;gap:6px;flex:1;min-width:220px}
+    .fg label{
+      font-size:.72rem;font-weight:600;color:var(--muted);
+      text-transform:uppercase;letter-spacing:.06em;
+    }
+    .fg input{
+      background:var(--card2);border:1px solid var(--border);
+      border-radius:10px;padding:10px 14px;font-size:.88rem;
+      color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;width:100%;
+    }
+    .fg input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+    .fg input::placeholder{color:var(--muted)}
+    .btn-add{
+      background:var(--accent);color:#000;border:none;
+      border-radius:10px;padding:10px 22px;font-size:.88rem;
+      font-weight:700;cursor:pointer;transition:opacity .2s,transform .2s;
+      white-space:nowrap;flex-shrink:0;
+    }
+    .btn-add:hover{opacity:.85;transform:translateY(-1px)}
+    .btn-add:disabled{opacity:.45;cursor:not-allowed;transform:none}
+
+    /* ── Status bar ──────────────────────────────────────── */
+    .status-bar{
+      display:flex;align-items:center;justify-content:space-between;
+      background:var(--card);border:1px solid var(--border);border-radius:12px;
+      padding:9px 18px;margin-bottom:20px;font-size:.8rem;color:var(--muted);
+      flex-wrap:wrap;gap:8px;
+    }
+    .s-left{display:flex;align-items:center;gap:8px}
+    .dot{
+      width:8px;height:8px;border-radius:50%;background:var(--green);
+      display:inline-block;animation:pulse 2s infinite;
+    }
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+    .cd{font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+
+    /* ── Event card ──────────────────────────────────────── */
+    .events{display:flex;flex-direction:column;gap:24px}
+    .event-card{
+      background:var(--card);border:1px solid var(--border);
+      border-radius:16px;overflow:hidden;box-shadow:var(--shadow);
+      animation:slideIn .3s ease;
+    }
+    @keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    .ev-hdr{
+      padding:16px 20px;display:flex;align-items:flex-start;
+      justify-content:space-between;gap:16px;flex-wrap:wrap;
+      background:var(--card2);border-bottom:1px solid var(--border);
+    }
+    .ev-name{font-size:1rem;font-weight:700;margin-bottom:4px}
+    .ev-meta{
+      font-size:.77rem;color:var(--muted);
+      display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    }
+    .ev-right{text-align:right;flex-shrink:0}
+    .ev-ts{font-size:.72rem;color:var(--muted)}
+    .ev-ts.stale{color:var(--red)}
+    .ev-acts{
+      display:flex;align-items:center;gap:7px;
+      margin-top:8px;justify-content:flex-end;
+    }
+    .btn-sm{
+      background:var(--card2);border:1px solid var(--border);
+      border-radius:8px;padding:5px 11px;font-size:.77rem;
+      cursor:pointer;color:var(--text);display:flex;
+      align-items:center;gap:4px;transition:all .2s;
+    }
+    .btn-sm:hover{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+    .btn-sm.danger:hover{background:var(--red-dim);border-color:var(--red);color:var(--red)}
+    .btn-sm:disabled{opacity:.45;cursor:not-allowed}
+
+    /* ── Price table ─────────────────────────────────────── */
+    .tbl-wrap{overflow-x:auto}
+    table{width:100%;border-collapse:collapse}
+    th{
+      padding:11px 16px;text-align:left;font-size:.7rem;
+      font-weight:700;color:var(--muted);text-transform:uppercase;
+      letter-spacing:.07em;border-bottom:1px solid var(--border);
+      white-space:nowrap;
+    }
+    td{
+      padding:13px 16px;font-size:.88rem;
+      border-bottom:1px solid var(--border);vertical-align:middle;
+    }
+    tr:last-child td{border-bottom:none}
+    tr.best{background:var(--gold-dim)}
+    tr:hover:not(.best){background:var(--card2)}
+
+    /* rank */
+    .rank{
+      width:30px;height:30px;border-radius:50%;display:flex;
+      align-items:center;justify-content:center;font-size:.78rem;
+      font-weight:700;background:var(--card2);color:var(--muted);
+    }
+    .rank.g{background:var(--gold);color:#000;font-size:1rem}
+
+    /* platform */
+    .plat-cell{display:flex;align-items:center;gap:10px}
+    .plat-ico{
+      width:28px;height:28px;border-radius:6px;display:flex;
+      align-items:center;justify-content:center;font-size:.62rem;
+      font-weight:900;flex-shrink:0;text-transform:uppercase;letter-spacing:.02em;
+    }
+    .plat-ico.ticketmaster{background:#026cdf;color:#fff}
+    .plat-ico.stubhub{background:#1a1a1a;color:#fff}
+    .plat-ico.vividseats{background:#0058a3;color:#fff}
+    .plat-ico.viagogo{background:#e31837;color:#fff}
+    .plat-ico.seatgeek{background:#ea352d;color:#fff}
+    .plat-name{font-weight:600;font-size:.86rem}
+
+    /* price */
+    .p-val{font-weight:700;font-size:.98rem;color:var(--green)}
+    .p-val.gold{color:var(--gold)}
+    .p-note{font-size:.7rem;color:var(--muted);margin-top:2px}
+    .p-na{color:var(--muted);font-size:.82rem}
+    .best-badge{
+      display:inline-flex;align-items:center;gap:3px;
+      background:var(--gold);color:#000;font-size:.62rem;font-weight:900;
+      padding:2px 7px;border-radius:20px;text-transform:uppercase;
+      letter-spacing:.05em;margin-left:7px;vertical-align:middle;
+    }
+
+    /* book btn */
+    .btn-book{
+      display:inline-flex;align-items:center;gap:5px;
+      padding:6px 13px;border-radius:8px;font-size:.78rem;font-weight:700;
+      border:1px solid var(--accent);background:var(--accent-dim);
+      color:var(--accent);transition:all .2s;white-space:nowrap;cursor:pointer;
+    }
+    .btn-book:hover{background:var(--accent);color:#000}
+    .btn-book.gold-btn{background:var(--gold);color:#000;border-color:var(--gold)}
+    .btn-book.gold-btn:hover{opacity:.85}
+    .btn-book.na-btn{
+      background:transparent;border-color:var(--border);color:var(--muted);
+    }
+    .btn-book.na-btn:hover{border-color:var(--muted);color:var(--text)}
+
+    /* shimmer */
+    .sh{
+      background:linear-gradient(90deg,var(--sh-from) 25%,var(--sh-to) 50%,var(--sh-from) 75%);
+      background-size:200% 100%;animation:shim 1.4s infinite;border-radius:6px;height:15px;
+    }
+    @keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+    /* empty state */
+    .empty{text-align:center;padding:72px 24px;color:var(--muted)}
+    .empty-ico{font-size:4rem;margin-bottom:14px;animation:float 3s ease-in-out infinite}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+    .empty-t{font-size:1.15rem;font-weight:700;color:var(--text);margin-bottom:8px}
+    .empty-s{font-size:.88rem;max-width:300px;margin:0 auto}
+
+    /* toast */
+    .toast{
+      position:fixed;bottom:24px;right:24px;padding:11px 18px;
+      border-radius:12px;font-size:.86rem;font-weight:600;z-index:999;
+      animation:slideUp .3s ease;max-width:340px;
+      box-shadow:0 8px 28px rgba(0,0,0,.3);
+    }
+    .toast.err{background:var(--red);color:#fff}
+    .toast.ok{background:var(--green);color:#000}
+    @keyframes slideUp{from{transform:translateY(12px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+    /* responsive */
+    @media(max-width:600px){
+      .hdr{padding:10px 14px}
+      .hdr-title{font-size:1.05rem}
+      .main{padding:14px 10px}
+      .add-panel{padding:16px}
+      .form-row{flex-direction:column}
+      .btn-add{width:100%;justify-content:center;text-align:center}
+      th,td{padding:9px 10px}
+      .ev-hdr{padding:12px 14px}
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header class="hdr">
+  <div class="hdr-l">
+    <!-- Ticket logo SVG -->
+    <svg class="logo" viewBox="0 0 42 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="42" height="42" rx="11" fill="url(#lg)"/>
+      <defs>
+        <linearGradient id="lg" x1="0" y1="0" x2="42" y2="42" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#00d4aa"/>
+          <stop offset="100%" stop-color="#ffd700"/>
+        </linearGradient>
+      </defs>
+      <path d="M9 14a1 1 0 0 1 1-1h22a1 1 0 0 1 1 1v4a3 3 0 0 0 0 6v4a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1v-4a3 3 0 0 0 0-6v-4Z" fill="rgba(255,255,255,.92)"/>
+      <line x1="21" y1="15" x2="21" y2="27" stroke="rgba(0,0,0,.18)" stroke-width="1.2" stroke-dasharray="2.5 2"/>
+      <circle cx="21" cy="14.5" r="1.2" fill="rgba(0,0,0,.18)"/>
+      <circle cx="21" cy="27.5" r="1.2" fill="rgba(0,0,0,.18)"/>
+      <text x="12" y="23.5" font-size="8" fill="#f59e0b" font-weight="900">★</text>
+      <text x="22.5" y="23.5" font-size="7" fill="#00897b" font-weight="900">$</text>
+    </svg>
+    <div>
+      <div class="hdr-title">Toronto Ticket Tracker</div>
+      <div class="hdr-sub">Live price comparison across 5 platforms</div>
+    </div>
+  </div>
+  <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
+    <span id="themeIco">☀️</span>
+    <span id="themeTxt">Light</span>
+  </button>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────────────── -->
+<main class="main">
+
+  <!-- Connection error -->
+  <div class="conn-err" id="connErr">
+    ⚠️ Cannot reach backend at <strong id="apiDisplay"></strong> — make sure it's deployed and the URL is updated in this file.
+  </div>
+
+  <!-- Add event panel -->
+  <div class="add-panel">
+    <div class="panel-title">Track a New Event</div>
+    <div class="form-row">
+      <div class="fg" style="flex:2.2">
+        <label>Ticketmaster CA URL *</label>
+        <input id="tmUrl" type="url"
+          placeholder="https://www.ticketmaster.ca/event/..."
+          onkeydown="if(event.key==='Enter')addEvent()"/>
+      </div>
+      <div class="fg" style="flex:2.2">
+        <label>VividSeats URL <span style="opacity:.5;font-weight:400">(optional)</span></label>
+        <input id="vsUrl" type="url"
+          placeholder="https://www.vividseats.com/..."
+          onkeydown="if(event.key==='Enter')addEvent()"/>
+      </div>
+      <button class="btn-add" id="addBtn" onclick="addEvent()">+ Add Event</button>
+    </div>
+  </div>
+
+  <!-- Status bar (hidden until connected) -->
+  <div class="status-bar" id="statusBar" style="display:none">
+    <div class="s-left">
+      <span class="dot"></span>
+      <span id="statusTxt">Connected — prices refresh every 60 s</span>
+    </div>
+    <div>Next refresh in <span class="cd" id="cd">1:00</span></div>
+  </div>
+
+  <!-- Event list -->
+  <div class="events" id="evList"></div>
+
+  <!-- Empty state -->
+  <div class="empty" id="emptyState" style="display:none">
+    <div class="empty-ico">🎟</div>
+    <div class="empty-t">Add your first event above</div>
+    <div class="empty-s">Paste a Ticketmaster CA URL and we'll track prices across Ticketmaster, StubHub, VividSeats, Viagogo, and SeatGeek in real time.</div>
+  </div>
+
+</main>
+
+<script>
+  // ── Config ────────────────────────────────────────────────────────────────
+  // After deploying the backend to Render.com, replace this with your live URL ← UPDATE THIS
+  const API_BASE = 'https://YOUR-APP.onrender.com';
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let events  = [];
+  let prices  = {};
+  let cdSec   = 60;
+  let cdTimer = null;
+
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  function toggleTheme() {
+    const html = document.documentElement;
+    const dark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', dark ? 'light' : 'dark');
+    document.getElementById('themeIco').textContent = dark ? '🌙' : '☀️';
+    document.getElementById('themeTxt').textContent = dark ? 'Dark' : 'Light';
+  }
+
+  // ── API helpers ───────────────────────────────────────────────────────────
+  async function apiFetch(path, opts = {}) {
+    const res = await fetch(API_BASE + path, { cache: 'no-store', ...opts });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+  const apiGet  = path => apiFetch(path);
+  const apiPost = (path, body) => apiFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const apiDel  = path => apiFetch(path, { method: 'DELETE' });
+
+  // ── Load all ──────────────────────────────────────────────────────────────
+  async function loadAll() {
+    try {
+      [events, prices] = await Promise.all([
+        apiGet('/api/events'),
+        apiGet('/api/prices'),
+      ]);
+      document.getElementById('connErr').classList.remove('show');
+      render();
+      resetCd();
+    } catch {
+      document.getElementById('connErr').classList.add('show');
+      document.getElementById('apiDisplay').textContent = API_BASE;
+    }
+  }
+
+  // ── Add event ─────────────────────────────────────────────────────────────
+  async function addEvent() {
+    const tm = document.getElementById('tmUrl').value.trim();
+    const vs = document.getElementById('vsUrl').value.trim();
+    if (!tm) { toast('Please enter a Ticketmaster URL', 'err'); return; }
+    if (!tm.includes('ticketmaster')) { toast('Please enter a Ticketmaster CA URL', 'err'); return; }
+
+    const btn = document.getElementById('addBtn');
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      const ev = await apiPost('/api/events', { ticketmasterUrl: tm, vividSeatsUrl: vs || null });
+      events.push(ev);
+      prices[ev.id] = null;
+      document.getElementById('tmUrl').value = '';
+      document.getElementById('vsUrl').value = '';
+      render();
+      toast('Event added — scraping prices now…', 'ok');
+      setTimeout(loadAll, 10000);
+    } catch (e) {
+      toast('Failed: ' + e.message, 'err');
+    } finally {
+      btn.disabled = false; btn.textContent = '+ Add Event';
+    }
+  }
+
+  // ── Remove event ──────────────────────────────────────────────────────────
+  async function removeEvent(id) {
+    try {
+      await apiDel('/api/events/' + id);
+      events = events.filter(e => e.id !== id);
+      delete prices[id];
+      render();
+      toast('Event removed', 'ok');
+    } catch (e) { toast('Remove failed: ' + e.message, 'err'); }
+  }
+
+  // ── Force refresh ─────────────────────────────────────────────────────────
+  async function forceRefresh(id, btn) {
+    btn.disabled = true; btn.innerHTML = '⟳ Refreshing…';
+    try {
+      await apiPost('/api/scrape/' + id, {});
+      toast('Refresh started — prices update in ~40 s', 'ok');
+      setTimeout(loadAll, 42000);
+    } catch (e) {
+      toast('Refresh failed: ' + e.message, 'err');
+      btn.disabled = false; btn.innerHTML = '↺ Refresh';
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  function render() {
+    const list  = document.getElementById('evList');
+    const empty = document.getElementById('emptyState');
+    const bar   = document.getElementById('statusBar');
+
+    if (events.length === 0) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      bar.style.display   = 'none';
+      return;
+    }
+    empty.style.display = 'none';
+    bar.style.display   = 'flex';
+    list.innerHTML = events.map(renderEvent).join('');
+  }
+
+  function renderEvent(ev) {
+    const pd = prices[ev.id];
+    const lu = pd ? new Date(pd.lastUpdated) : null;
+    const mins = lu ? Math.floor((Date.now() - lu) / 60000) : null;
+    const stale = mins !== null && mins > 30;
+    let ts = 'Not yet checked';
+    if (mins === 0) ts = 'Updated just now';
+    else if (mins === 1) ts = 'Updated 1 min ago';
+    else if (mins !== null) ts = `Updated ${mins} min ago`;
+    if (stale) ts += ' ⚠️ Stale';
+
+    const rows = pd ? buildRows(pd.prices, ev) : skeletonRows();
+
+    return `
+      <div class="event-card" id="card-${esc(ev.id)}">
+        <div class="ev-hdr">
+          <div>
+            <div class="ev-name">${esc(ev.name)}</div>
+            <div class="ev-meta">
+              <span>📍 ${esc(ev.venue)}</span>
+              <span>📅 ${esc(ev.date)}</span>
+            </div>
+          </div>
+          <div class="ev-right">
+            <div class="ev-ts${stale ? ' stale' : ''}">${ts}</div>
+            <div class="ev-acts">
+              <button class="btn-sm" onclick="forceRefresh('${esc(ev.id)}',this)">↺ Refresh</button>
+              <button class="btn-sm danger" onclick="removeEvent('${esc(ev.id)}')">✕ Remove</button>
+            </div>
+          </div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Platform</th>
+                <th>Price</th>
+                <th>Currency</th>
+                <th>Updated</th>
+                <th>Book Now</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
+  const PLAT_ABBR = { ticketmaster:'TM', stubhub:'SH', vividseats:'VS', viagogo:'VG', seatgeek:'SG' };
+
+  function cmpPrice(p) {
+    if (p.status !== 'available' || p.price == null) return Infinity;
+    return p.currency === 'USD' && p.priceCAD ? p.priceCAD : p.price;
+  }
+
+  function buildRows(platformPrices, ev) {
+    if (!platformPrices || !platformPrices.length) return skeletonRows();
+    const sorted = [...platformPrices].sort((a, b) => cmpPrice(a) - cmpPrice(b));
+    return sorted.map((p, i) => renderRow(p, i)).join('');
+  }
+
+  function renderRow(p, i) {
+    const best = i === 0 && p.status === 'available' && p.price != null;
+    const abbr = PLAT_ABBR[p.platform] || p.platform.slice(0,2).toUpperCase();
+    const safeUrl = /^https?:\/\//.test(p.url) ? p.url : '#';
+
+    let priceHtml, curHtml, bookHtml;
+
+    if (p.status === 'available' && p.price != null) {
+      const disp = p.currency === 'USD' ? `USD $${p.price.toFixed(2)}` : `$${p.price.toFixed(2)}`;
+      priceHtml = `
+        <div class="p-val${best?' gold':''}">
+          ${esc(disp)}${best ? '<span class="best-badge">🥇 Best Deal</span>' : ''}
+        </div>
+        ${p.currencyNote ? `<div class="p-note">${esc(p.currencyNote)}</div>` : ''}`;
+      curHtml   = p.currency === 'USD' ? 'USD → CAD*' : 'CAD';
+      bookHtml  = `<a class="btn-book${best?' gold-btn':''}" href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">Book Now →</a>`;
+    } else {
+      priceHtml = `<span class="p-na">N/A${p.note ? ' — ' + esc(p.note) : ''}</span>`;
+      curHtml   = '—';
+      bookHtml  = `<a class="btn-book na-btn" href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">Check Manually →</a>`;
+    }
+
+    const updTime = p.lastUpdated ? fmtTime(new Date(p.lastUpdated)) : '—';
+
+    return `
+      <tr${best ? ' class="best"' : ''}>
+        <td><div class="rank${best?' g':''}">
+          ${best ? '🥇' : i + 1}
+        </div></td>
+        <td>
+          <div class="plat-cell">
+            <div class="plat-ico ${esc(p.platform)}">${abbr}</div>
+            <span class="plat-name">${esc(p.name)}</span>
+          </div>
+        </td>
+        <td>${priceHtml}</td>
+        <td style="color:var(--muted);font-size:.78rem">${curHtml}</td>
+        <td style="color:var(--muted);font-size:.74rem;white-space:nowrap">${updTime}</td>
+        <td>${bookHtml}</td>
+      </tr>`;
+  }
+
+  function skeletonRows() {
+    const defs = [
+      { platform:'ticketmaster', name:'Ticketmaster', abbr:'TM' },
+      { platform:'stubhub',      name:'StubHub',      abbr:'SH' },
+      { platform:'vividseats',   name:'VividSeats',   abbr:'VS' },
+      { platform:'viagogo',      name:'Viagogo',      abbr:'VG' },
+      { platform:'seatgeek',     name:'SeatGeek',     abbr:'SG' },
+    ];
+    return defs.map((d, i) => `
+      <tr>
+        <td><div class="rank">${i+1}</div></td>
+        <td><div class="plat-cell">
+          <div class="plat-ico ${d.platform}">${d.abbr}</div>
+          <span class="plat-name">${d.name}</span>
+        </div></td>
+        <td><div class="sh" style="width:80px"></div></td>
+        <td><div class="sh" style="width:38px"></div></td>
+        <td><div class="sh" style="width:55px"></div></td>
+        <td><div class="sh" style="width:90px"></div></td>
+      </tr>`).join('');
+  }
+
+  // ── Countdown ─────────────────────────────────────────────────────────────
+  function resetCd() {
+    cdSec = 60;
+    if (!cdTimer) cdTimer = setInterval(tickCd, 1000);
+    drawCd();
+  }
+  function tickCd() {
+    cdSec--;
+    if (cdSec <= 0) { cdSec = 60; loadAll(); }
+    drawCd();
+  }
+  function drawCd() {
+    const el = document.getElementById('cd');
+    if (!el) return;
+    const m = Math.floor(cdSec / 60);
+    const s = cdSec % 60;
+    el.textContent = `${m}:${String(s).padStart(2,'0')}`;
+  }
+
+  // ── Toast ─────────────────────────────────────────────────────────────────
+  function toast(msg, type='err') {
+    document.querySelector('.toast')?.remove();
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 3800);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function escAttr(s) {
+    if (!s || !/^https?:\/\//.test(s)) return '#';
+    return s.replace(/"/g,'%22');
+  }
+  function fmtTime(d) {
+    if (!(d instanceof Date) || isNaN(d)) return '—';
+    return d.toLocaleTimeString('en-CA', { hour:'2-digit', minute:'2-digit' });
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  document.getElementById('apiDisplay').textContent = API_BASE;
+  loadAll();
+</script>
+</body>
+</html>

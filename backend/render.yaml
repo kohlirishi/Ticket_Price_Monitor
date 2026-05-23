@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: toronto-ticket-tracker
+    env: node
+    # Set Root Directory to "backend" in Render dashboard, then:
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RENDER_URL
+        # Replace with your actual Render service URL after first deploy  ← UPDATE THIS
+        value: https://toronto-ticket-tracker.onrender.com
+      - key: FRONTEND_URL
+        # Replace with your GitHub Pages URL after enabling Pages        ← UPDATE THIS
+        value: https://your-username.github.io
