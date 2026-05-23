@@ -8,6 +8,8 @@ services:
     healthCheckPath: /api/health
     plan: free
     envVars:
+      - key: NODE_VERSION
+        value: "20.19.2"
       - key: NODE_ENV
         value: production
       - key: RENDER_URL
