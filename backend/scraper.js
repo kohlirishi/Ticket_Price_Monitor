@@ -572,6 +572,88 @@ async function scrapeSeatPick(browser, event) {
   }
 }
 
+// ─── TicketSmarter ────────────────────────────────────────────────────────────
+async function scrapeTicketSmarter(browser, event) {
+  const searchQuery = encodeURIComponent(event.name + ' toronto');
+  const searchUrl = `https://www.ticketsmarter.com/search?q=${searchQuery}`;
+  const meta = { name: 'TicketSmarter', platform: 'ticketsmarter', currency: 'USD', url: searchUrl };
+
+  // Step 1: plain HTTP fetch — JSON-LD + embedded patterns
+  try {
+    const { body } = await fetchUrl(searchUrl);
+    const jsonLdPrice = extractJsonLdPrice(body);
+    if (jsonLdPrice) {
+      const cadPrice = Math.round(jsonLdPrice * USD_TO_CAD * 100) / 100;
+      console.log('[TicketSmarter] JSON-LD price:', jsonLdPrice);
+      return { ...meta, price: jsonLdPrice, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+    const patterns = [
+      /"minPrice"\s*:\s*([\d.]+)/,
+      /"lowestPrice"\s*:\s*([\d.]+)/,
+      /"startingPrice"\s*:\s*([\d.]+)/,
+      /"price"\s*:\s*"?([\d.]+)"?/,
+      /from\s+\$\s*([\d,]+)/i,
+    ];
+    for (const rx of patterns) {
+      const m = body.match(rx);
+      if (m) {
+        const p = parseFloat(m[1].replace(/,/g, ''));
+        if (p > 0 && p < 25000) {
+          const cadPrice = Math.round(p * USD_TO_CAD * 100) / 100;
+          console.log('[TicketSmarter] fetch price:', p);
+          return { ...meta, price: p, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[TicketSmarter] fetch failed:', err.message);
+  }
+
+  // Step 2: Puppeteer fallback
+  let page;
+  try {
+    page = await newPage(browser);
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+    await sleep(4000);
+    if (await isBlocked(page)) return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
+
+    const html = await page.content();
+    const jsonLdPrice = extractJsonLdPrice(html);
+    if (jsonLdPrice) {
+      const cadPrice = Math.round(jsonLdPrice * USD_TO_CAD * 100) / 100;
+      return { ...meta, price: jsonLdPrice, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+
+    const texts = await page.evaluate(() => {
+      const found = [];
+      for (const sel of [
+        '[data-testid*="price"]', '[class*="price"]', '[class*="Price"]',
+        '[class*="ticket"]', '[class*="listing"]', '[class*="event"]',
+      ]) {
+        for (const el of document.querySelectorAll(sel)) {
+          const t = el.textContent.trim();
+          if (t.includes('$') && /\d/.test(t)) found.push(t);
+        }
+      }
+      found.push(...(document.body.innerText.match(/(from|lowest|starting)\s+\$\s*[\d,]+/gi) || []));
+      found.push(...(document.body.innerText.match(/\$\s*[\d,]+(?:\.\d{2})?/g) || []).slice(0, 15));
+      return found;
+    });
+
+    const lowestUsd = extractLowestPrice(texts);
+    if (lowestUsd) {
+      const cadPrice = Math.round(lowestUsd * USD_TO_CAD * 100) / 100;
+      return { ...meta, price: lowestUsd, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+    return { ...meta, price: null, status: 'unavailable', note: 'Visit site to check prices', lastUpdated: new Date().toISOString() };
+  } catch (err) {
+    console.error('[TicketSmarter]', err.message);
+    return { ...meta, price: null, status: 'unavailable', note: 'Scrape failed — check manually', lastUpdated: new Date().toISOString() };
+  } finally {
+    if (page) await page.close().catch(() => {});
+  }
+}
+
 // ─── Orchestrator ────────────────────────────────────────────────────────────
 async function scrapeEvent(event) {
   const scrapers = [
@@ -582,6 +664,7 @@ async function scrapeEvent(event) {
     browser => scrapeSeatGeek(browser, event),
     browser => scrapeGametime(browser, event),
     browser => scrapeSeatPick(browser, event),
+    browser => scrapeTicketSmarter(browser, event),
   ];
 
   let browser;
