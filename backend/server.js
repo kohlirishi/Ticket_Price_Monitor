@@ -11,8 +11,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── CORS ───────────────────────────────────────────────────────────────────
-// After deploying to GitHub Pages, replace '*' with your actual Pages URL, e.g.:
-//   'https://your-username.github.io'    ← UPDATE THIS
 const ALLOWED_ORIGIN = process.env.FRONTEND_URL || '*';
 
 app.use(cors({
@@ -22,12 +20,17 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// ─── In-memory scrape status ──────────────────────────────────────────────────
+// Tracks live progress for each event currently being scraped.
+// Written here first (fast), then persisted to db as each platform finishes.
+const scrapeStatus = {};       // { [eventId]: { running, startedAt, completed, total } }
+const TOTAL_PLATFORMS = 8;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function parseTicketmasterUrl(url) {
   const u = new URL(url);
   const slug = u.pathname.split('/').filter(Boolean)[0] || '';
 
-  // Extract date segment: MM-DD-YYYY at end of slug
   const dateMatch = slug.match(/(\d{2})-(\d{2})-(\d{4})$/);
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   let date = 'Date TBD';
@@ -58,19 +61,76 @@ function parseTicketmasterUrl(url) {
   return { name, date, venue };
 }
 
+// ─── Clear stale scrapingInProgress flags on restart ────────────────────────
+function clearStaleScrapingFlags() {
+  for (const ev of db.getEvents()) {
+    const pd = db.getPrices(ev.id);
+    if (pd && pd.scrapingInProgress) {
+      db.setPrices(ev.id, { ...pd, scrapingInProgress: false });
+      console.log('[startup] cleared stale scrapingInProgress for', ev.name);
+    }
+  }
+}
+
 // ─── Scraping ────────────────────────────────────────────────────────────────
 let scrapeRunning = false;
 
 async function scrapeAndStore(eventId) {
   const event = db.getEvent(eventId);
   if (!event) return;
+
   console.log(`[scrape] ${event.name}`);
+
+  // Set in-memory status so GET /api/prices/:id responds immediately
+  scrapeStatus[eventId] = { running: true, startedAt: new Date().toISOString(), completed: 0, total: TOTAL_PLATFORMS };
+
+  // Write "scraping started" to db so frontend sees it on first poll even before
+  // any platform finishes
+  const existing = db.getPrices(eventId);
+  db.setPrices(eventId, {
+    lastUpdated: new Date().toISOString(),
+    prices: existing ? existing.prices : [],
+    scrapingInProgress: true,
+    completedPlatforms: 0,
+    totalPlatforms: TOTAL_PLATFORMS,
+  });
+
   try {
-    const prices = await scrapeEvent(event);
-    db.setPrices(eventId, { lastUpdated: new Date().toISOString(), prices });
+    // Called immediately as each of the 8 platforms resolves (parallel)
+    const onPlatformComplete = (result) => {
+      const st = scrapeStatus[eventId];
+      if (!st) return;
+      st.completed++;
+      const completed = st.completed;
+
+      // Merge this platform's result into the partial db record
+      const current = db.getPrices(eventId) || { prices: [] };
+      const currentPrices = [...(current.prices || [])];
+      const idx = currentPrices.findIndex(p => p.platform === result.platform);
+      if (idx >= 0) currentPrices[idx] = result;
+      else currentPrices.push(result);
+
+      db.setPrices(eventId, {
+        lastUpdated: new Date().toISOString(),
+        prices: currentPrices,
+        scrapingInProgress: completed < TOTAL_PLATFORMS,
+        completedPlatforms: completed,
+        totalPlatforms: TOTAL_PLATFORMS,
+      });
+      console.log(`[scrape] ${event.name} — ${completed}/${TOTAL_PLATFORMS} done`);
+    };
+
+    await scrapeEvent(event, onPlatformComplete);
     console.log(`[scrape] done: ${event.name}`);
   } catch (err) {
     console.error(`[scrape] failed (${event.name}):`, err.message);
+  } finally {
+    // Always mark as finished
+    scrapeStatus[eventId] = { running: false, completed: TOTAL_PLATFORMS, total: TOTAL_PLATFORMS };
+    const final = db.getPrices(eventId);
+    if (final) {
+      db.setPrices(eventId, { ...final, scrapingInProgress: false, completedPlatforms: TOTAL_PLATFORMS });
+    }
   }
 }
 
@@ -91,7 +151,6 @@ async function seedDefaultEvent() {
   };
   db.addEvent(defaultEvent);
   console.log('[seed] Default event added:', defaultEvent.name);
-  // Kick off initial scrape after a short delay
   setTimeout(() => scrapeAndStore(DEFAULT_ID), 4000);
 }
 
@@ -131,17 +190,45 @@ app.delete('/api/events/:id', (req, res) => {
     return res.status(404).json({ error: 'Event not found' });
   }
   db.removeEvent(req.params.id);
+  delete scrapeStatus[req.params.id];
   res.json({ success: true });
 });
 
+// Returns all prices — scrapingInProgress baked into each entry via db writes
 app.get('/api/prices', (_req, res) => {
-  res.json(db.getPrices());
+  const allPrices = db.getPrices();
+  // Overlay in-memory status (more current than db during an active scrape)
+  for (const [eventId, st] of Object.entries(scrapeStatus)) {
+    if (allPrices[eventId]) {
+      allPrices[eventId].scrapingInProgress = st.running;
+      allPrices[eventId].completedPlatforms = st.completed;
+      allPrices[eventId].totalPlatforms = st.total;
+    }
+  }
+  res.json(allPrices);
 });
 
+// Per-event — frontend polls this every 3 s while scrapingInProgress is true
 app.get('/api/prices/:eventId', (req, res) => {
-  const prices = db.getPrices(req.params.eventId);
-  if (!prices) return res.status(404).json({ error: 'No price data yet — scrape in progress' });
-  res.json(prices);
+  const priceData = db.getPrices(req.params.eventId);
+  const st = scrapeStatus[req.params.eventId] || {};
+
+  if (!priceData && !st.running) {
+    return res.status(404).json({ error: 'No price data yet — scrape in progress' });
+  }
+
+  const response = priceData
+    ? { ...priceData }
+    : { prices: [], lastUpdated: null, scrapingInProgress: true, completedPlatforms: 0, totalPlatforms: TOTAL_PLATFORMS };
+
+  // In-memory status is always fresher than db during an active scrape
+  if (st.running !== undefined) {
+    response.scrapingInProgress = st.running;
+    response.completedPlatforms = st.completed ?? response.completedPlatforms ?? 0;
+    response.totalPlatforms = st.total ?? TOTAL_PLATFORMS;
+  }
+
+  res.json(response);
 });
 
 app.post('/api/scrape/:eventId', async (req, res) => {
@@ -153,7 +240,6 @@ app.post('/api/scrape/:eventId', async (req, res) => {
 });
 
 // ─── Cron: scrape all events every 5 minutes ──────────────────────────────
-// 60s was too short — 8 platforms × (scrape + delays) takes 3-4 min per event
 cron.schedule('*/5 * * * *', async () => {
   if (scrapeRunning) {
     console.log('[cron] Previous scrape still running — skipping');
@@ -171,7 +257,6 @@ cron.schedule('*/5 * * * *', async () => {
 
 // ─── Cron: self-ping every 10 minutes to keep Render free tier awake ─────
 cron.schedule('*/10 * * * *', () => {
-  // Set RENDER_URL env var in Render.com dashboard to your service URL   ← UPDATE THIS
   const target = process.env.RENDER_URL;
   if (!target) return;
   const client = target.startsWith('https') ? https : http;
@@ -243,13 +328,14 @@ async function seedFifaEvents() {
     db.addEvent({ ...match, addedAt: new Date().toISOString() });
     console.log('[seed] FIFA match added:', match.name);
     setTimeout(() => scrapeAndStore(match.id), delay);
-    delay += 3000; // stagger scrapes so browser doesn't overlap
+    delay += 3000;
   }
 }
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`Toronto Ticket Tracker backend on port ${PORT}`);
+  clearStaleScrapingFlags();
   await seedDefaultEvent();
   await seedFifaEvents();
 });

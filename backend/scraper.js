@@ -655,7 +655,10 @@ async function scrapeTicketSmarter(browser, event) {
 }
 
 // ─── Orchestrator ────────────────────────────────────────────────────────────
-async function scrapeEvent(event) {
+// onPlatformComplete(result) is called immediately as each platform finishes —
+// server.js uses this to write partial results to db so the frontend can poll
+// and see live progress instead of waiting for all 8 to finish.
+async function scrapeEvent(event, onPlatformComplete) {
   const scrapers = [
     browser => scrapeTicketmaster(browser, event),
     browser => scrapeStubHub(browser, event),
@@ -670,10 +673,14 @@ async function scrapeEvent(event) {
   let browser;
   try {
     browser = await launchBrowser();
-    const settled = await Promise.allSettled(scrapers.map(fn => fn(browser)));
-    return settled
-      .map(r => r.status === 'fulfilled' ? r.value : null)
-      .filter(Boolean);
+    const results = [];
+    await Promise.allSettled(scrapers.map(fn =>
+      fn(browser).then(result => {
+        results.push(result);
+        if (onPlatformComplete) onPlatformComplete(result);
+      })
+    ));
+    return results;
   } finally {
     if (browser) await browser.close().catch(err => console.error('Browser close:', err.message));
   }

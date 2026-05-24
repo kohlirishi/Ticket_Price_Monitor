@@ -197,7 +197,7 @@
     .btn-sm.danger:hover{background:var(--red-dim);border-color:var(--red);color:var(--red)}
     .btn-sm:disabled{opacity:.45;cursor:not-allowed}
 
-    /* Best-price pill (shown in collapsed header) */
+    /* Status pills shown in collapsed header */
     .pill-best{
       display:flex;align-items:center;gap:6px;
       background:var(--gold-dim);border:1px solid var(--gold);
@@ -207,6 +207,26 @@
     .pill-plat{font-weight:400;opacity:.75;font-size:.7rem}
     .pill-chk{color:var(--muted);font-size:.75rem;white-space:nowrap}
     .pill-na{color:var(--muted);font-size:.75rem;white-space:nowrap}
+
+    /* Loading progress pill */
+    .pill-loading{
+      display:flex;align-items:center;gap:5px;
+      color:var(--accent);font-size:.75rem;white-space:nowrap;font-weight:600;
+    }
+    .spin{display:inline-block;animation:spin .9s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* Timeout pill */
+    .pill-timeout{
+      display:flex;align-items:center;gap:6px;
+      color:var(--red);font-size:.75rem;white-space:nowrap;
+    }
+    .btn-retry{
+      background:var(--red-dim);border:1px solid var(--red);color:var(--red);
+      border-radius:8px;padding:3px 10px;font-size:.72rem;font-weight:700;
+      cursor:pointer;transition:all .2s;
+    }
+    .btn-retry:hover{background:var(--red);color:#fff}
 
     /* ── Price table ─────────────────────────────────────── */
     .tbl-wrap{overflow-x:auto}
@@ -320,7 +340,6 @@
 <!-- ── Header ─────────────────────────────────────────────────────────── -->
 <header class="hdr">
   <div class="hdr-l">
-    <!-- Ticket logo SVG -->
     <svg class="logo" viewBox="0 0 42 42" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect width="42" height="42" rx="11" fill="url(#lg)"/>
       <defs>
@@ -350,7 +369,6 @@
 <!-- ── Main ───────────────────────────────────────────────────────────── -->
 <main class="main">
 
-  <!-- Connection error -->
   <div class="conn-err" id="connErr">
     ⚠️ Cannot reach backend at <strong id="apiDisplay"></strong> — make sure it's deployed and the URL is updated in this file.
   </div>
@@ -375,13 +393,13 @@
     </div>
   </div>
 
-  <!-- Status bar (hidden until connected) -->
+  <!-- Status bar -->
   <div class="status-bar" id="statusBar" style="display:none">
     <div class="s-left">
       <span class="dot"></span>
       <span id="statusTxt">Connected — prices refresh every 5 min</span>
     </div>
-    <div>Next refresh in <span class="cd" id="cd">1:00</span></div>
+    <div>Next refresh in <span class="cd" id="cd">5:00</span></div>
   </div>
 
   <!-- Event list -->
@@ -391,22 +409,25 @@
   <div class="empty" id="emptyState" style="display:none">
     <div class="empty-ico">🎟</div>
     <div class="empty-t">Add your first event above</div>
-    <div class="empty-s">Paste a Ticketmaster CA URL and we'll track prices across Ticketmaster, StubHub, VividSeats, Viagogo, and SeatGeek in real time.</div>
+    <div class="empty-s">Paste a Ticketmaster CA URL and we'll track prices across 8 platforms in real time.</div>
   </div>
 
 </main>
 
 <script>
   // ── Config ────────────────────────────────────────────────────────────────
-  // After deploying the backend to Render.com, replace this with your live URL ← UPDATE THIS
   const API_BASE = 'https://ticket-price-monitor.onrender.com';
 
   // ── State ─────────────────────────────────────────────────────────────────
   let events        = [];
   let prices        = {};
-  let cdSec         = 300; // 5 min — matches backend scrape interval
+  let cdSec         = 300;
   let cdTimer       = null;
-  let expandedCards = new Set(); // tracks which event IDs are expanded
+  let expandedCards = new Set();
+
+  // Per-event polling state:
+  // { [eventId]: { polling: bool, pollTimer: id, timeoutTimer: id, timedOut: bool } }
+  let eventScrapeState = {};
 
   // ── Theme ─────────────────────────────────────────────────────────────────
   function toggleTheme() {
@@ -444,6 +465,15 @@
       document.getElementById('connErr').classList.remove('show');
       render();
       resetCd();
+      // Start/stop polling based on scraping state for each event
+      for (const ev of events) {
+        const pd = prices[ev.id];
+        if (pd && pd.scrapingInProgress) {
+          startPolling(ev.id);
+        } else {
+          stopPolling(ev.id);
+        }
+      }
     } catch {
       document.getElementById('connErr').classList.add('show');
       document.getElementById('apiDisplay').textContent = API_BASE;
@@ -462,12 +492,13 @@
     try {
       const ev = await apiPost('/api/events', { ticketmasterUrl: tm, vividSeatsUrl: vs || null });
       events.push(ev);
-      prices[ev.id] = null;
+      prices[ev.id] = { prices: [], scrapingInProgress: true, completedPlatforms: 0, totalPlatforms: 8 };
       document.getElementById('tmUrl').value = '';
       document.getElementById('vsUrl').value = '';
       render();
-      toast('Event added — scraping prices now…', 'ok');
-      setTimeout(loadAll, 10000);
+      toast('Event added — watching prices load…', 'ok');
+      // Start polling immediately for the new event
+      startPolling(ev.id);
     } catch (e) {
       toast('Failed: ' + e.message, 'err');
     } finally {
@@ -479,8 +510,10 @@
   async function removeEvent(id) {
     try {
       await apiDel('/api/events/' + id);
+      stopPolling(id);
       events = events.filter(e => e.id !== id);
       delete prices[id];
+      delete eventScrapeState[id];
       render();
       toast('Event removed', 'ok');
     } catch (e) { toast('Remove failed: ' + e.message, 'err'); }
@@ -491,11 +524,111 @@
     btn.disabled = true; btn.innerHTML = '⟳ Refreshing…';
     try {
       await apiPost('/api/scrape/' + id, {});
-      toast('Refresh started — prices update in ~40 s', 'ok');
-      setTimeout(loadAll, 42000);
+      toast('Scrape started — watching for updates…', 'ok');
+      // Optimistically set scraping state so pill updates immediately
+      if (!prices[id]) prices[id] = { prices: [] };
+      prices[id].scrapingInProgress = true;
+      prices[id].completedPlatforms = 0;
+      prices[id].totalPlatforms = 8;
+      // Reset timeout state if previously timed out
+      if (eventScrapeState[id]) eventScrapeState[id].timedOut = false;
+      updateCard(id);
+      startPolling(id);
     } catch (e) {
       toast('Refresh failed: ' + e.message, 'err');
+    } finally {
       btn.disabled = false; btn.innerHTML = '↺ Refresh';
+    }
+  }
+
+  // ── Polling ───────────────────────────────────────────────────────────────
+  // Polls GET /api/prices/:eventId every 3 seconds while scraping is active.
+  // Surgically updates only the pill and table body — no full re-render.
+
+  function startPolling(eventId) {
+    if (eventScrapeState[eventId]?.polling) return; // already polling
+    const pollTimer    = setInterval(() => pollEvent(eventId), 3000);
+    const timeoutTimer = setTimeout(() => showTimeout(eventId), 90000);
+    eventScrapeState[eventId] = {
+      polling: true,
+      pollTimer,
+      timeoutTimer,
+      timedOut: false,
+    };
+  }
+
+  function stopPolling(eventId) {
+    const st = eventScrapeState[eventId];
+    if (!st) return;
+    if (st.pollTimer)    clearInterval(st.pollTimer);
+    if (st.timeoutTimer) clearTimeout(st.timeoutTimer);
+    if (eventScrapeState[eventId]) {
+      eventScrapeState[eventId].polling = false;
+      eventScrapeState[eventId].pollTimer = null;
+      eventScrapeState[eventId].timeoutTimer = null;
+    }
+  }
+
+  async function pollEvent(eventId) {
+    try {
+      const pd = await apiGet('/api/prices/' + eventId);
+      prices[eventId] = pd;
+      updateCard(eventId);
+      if (!pd.scrapingInProgress) {
+        stopPolling(eventId);
+      }
+    } catch { /* ignore transient poll failures */ }
+  }
+
+  function showTimeout(eventId) {
+    stopPolling(eventId);
+    if (!eventScrapeState[eventId]) eventScrapeState[eventId] = {};
+    eventScrapeState[eventId].timedOut = true;
+    updateCard(eventId);
+  }
+
+  // Called by the Retry button inside the timeout pill
+  function manualRefresh(eventId) {
+    if (eventScrapeState[eventId]) eventScrapeState[eventId].timedOut = false;
+    if (!prices[eventId]) prices[eventId] = { prices: [] };
+    prices[eventId].scrapingInProgress = true;
+    prices[eventId].completedPlatforms = 0;
+    updateCard(eventId);
+    apiPost('/api/scrape/' + eventId, {})
+      .then(() => startPolling(eventId))
+      .catch(err => toast('Refresh failed: ' + err.message, 'err'));
+  }
+
+  // ── Surgical card update (no full re-render) ───────────────────────────────
+  // Only updates the status pill and table body — preserves accordion state.
+  function updateCard(eventId) {
+    const pd = prices[eventId];
+    const ev = events.find(e => e.id === eventId);
+    if (!ev) return;
+
+    // Status pill
+    const pillEl = document.getElementById('pill-' + eventId);
+    if (pillEl) pillEl.innerHTML = getStatusLabel(ev, pd);
+
+    // Table body
+    const tbodyEl = document.getElementById('tbody-' + eventId);
+    if (tbodyEl) {
+      const inProgress = pd?.scrapingInProgress || false;
+      tbodyEl.innerHTML = pd ? buildRows(pd.prices, ev, inProgress) : skeletonRows();
+    }
+
+    // Timestamp
+    const tsEl = document.getElementById('ts-' + eventId);
+    if (tsEl && pd && pd.lastUpdated) {
+      const lu   = new Date(pd.lastUpdated);
+      const mins = Math.floor((Date.now() - lu) / 60000);
+      const stale = mins > 30;
+      let ts = mins === 0 ? 'Updated just now'
+             : mins === 1 ? 'Updated 1 min ago'
+             : `Updated ${mins} min ago`;
+      if (stale) ts += ' ⚠️ Stale';
+      tsEl.textContent  = ts;
+      tsEl.className    = 'ev-ts' + (stale ? ' stale' : '');
     }
   }
 
@@ -516,7 +649,6 @@
     list.innerHTML = events.map(renderEvent).join('');
   }
 
-  // Toggle card open/closed without full re-render
   function toggleEvent(id) {
     const card = document.getElementById('card-' + id);
     if (!card) return;
@@ -524,11 +656,34 @@
     if (opening) expandedCards.add(id); else expandedCards.delete(id);
   }
 
-  // Best-price pill shown in collapsed header
-  function getBestPill(pd) {
-    if (!pd || !pd.prices) return '<span class="pill-chk">⏳ Checking prices…</span>';
-    const avail = (pd.prices || []).filter(p => p.status === 'available' && p.price != null);
-    if (!avail.length) return '<span class="pill-na">No prices found</span>';
+  // ── Dynamic status label ──────────────────────────────────────────────────
+  // Replaces the old static "Checking prices…" pill with a computed label
+  // that reflects the actual scrape state in real time.
+  function getStatusLabel(ev, pd) {
+    // Timeout state — scrape took > 90 s with no completion
+    if (eventScrapeState[ev.id]?.timedOut) {
+      return `<span class="pill-timeout">⚠️ Taking too long &nbsp;<button class="btn-retry" onclick="event.stopPropagation();manualRefresh('${esc(ev.id)}')">Retry</button></span>`;
+    }
+
+    // Actively scraping — show live progress count
+    if (pd && pd.scrapingInProgress) {
+      const done  = pd.completedPlatforms || 0;
+      const total = pd.totalPlatforms    || 8;
+      return `<span class="pill-loading"><span class="spin">⟳</span> ${done}&thinsp;/&thinsp;${total} loaded</span>`;
+    }
+
+    // Never scraped yet (no price record at all)
+    if (!pd || !pd.prices || !pd.prices.length) {
+      return `<span class="pill-chk">🕐 Waiting for first scrape…</span>`;
+    }
+
+    // Scrape complete — no available prices found
+    const avail = pd.prices.filter(p => p.status === 'available' && p.price != null);
+    if (!avail.length) {
+      return `<span class="pill-na">⚠️ No prices found</span>`;
+    }
+
+    // Best price — show in gold pill
     const best = avail.reduce((a, b) => cmpPrice(a) <= cmpPrice(b) ? a : b);
     const disp = best.currency === 'USD' && best.priceCAD
       ? `≈ CAD $${best.priceCAD.toFixed(0)}`
@@ -537,13 +692,12 @@
   }
 
   function renderEvent(ev) {
-    const pd    = prices[ev.id];
+    const pd     = prices[ev.id];
     const isOpen = expandedCards.has(ev.id);
     const isFifa = /fifa|world cup/i.test(ev.name);
     const icon   = isFifa ? '⚽' : '🎟';
 
-    // Timestamp for body
-    const lu   = pd ? new Date(pd.lastUpdated) : null;
+    const lu   = pd && pd.lastUpdated ? new Date(pd.lastUpdated) : null;
     const mins = lu ? Math.floor((Date.now() - lu) / 60000) : null;
     const stale = mins !== null && mins > 30;
     let ts = 'Not yet checked';
@@ -552,12 +706,14 @@
     else if (mins !== null) ts = `Updated ${mins} min ago`;
     if (stale) ts += ' ⚠️ Stale';
 
-    const rows = pd ? buildRows(pd.prices, ev) : skeletonRows();
+    const inProgress = pd?.scrapingInProgress || false;
+    const rows       = pd ? buildRows(pd.prices, ev, inProgress) : skeletonRows();
+    const statusLabel = getStatusLabel(ev, pd);
 
     return `
       <div class="event-card${isOpen ? ' open' : ''}" id="card-${esc(ev.id)}">
 
-        <!-- Always-visible summary strip (clickable) -->
+        <!-- Always-visible summary strip -->
         <div class="ev-summary" onclick="toggleEvent('${esc(ev.id)}')">
           <div class="ev-sum-left">
             <span class="ev-icon">${icon}</span>
@@ -570,7 +726,7 @@
             </div>
           </div>
           <div class="ev-sum-right">
-            ${getBestPill(pd)}
+            <div id="pill-${esc(ev.id)}">${statusLabel}</div>
             <span class="chevron">▾</span>
           </div>
         </div>
@@ -578,7 +734,7 @@
         <!-- Collapsible body -->
         <div class="ev-body">
           <div class="ev-body-meta">
-            <span class="ev-ts${stale ? ' stale' : ''}">${ts}</span>
+            <span class="ev-ts${stale ? ' stale' : ''}" id="ts-${esc(ev.id)}">${ts}</span>
             <div class="ev-acts">
               <button class="btn-sm" onclick="forceRefresh('${esc(ev.id)}',this)">↺ Refresh</button>
               <button class="btn-sm danger" onclick="removeEvent('${esc(ev.id)}')">✕ Remove</button>
@@ -592,7 +748,7 @@
                   <th>Currency</th><th>Updated</th><th>Book Now</th>
                 </tr>
               </thead>
-              <tbody>${rows}</tbody>
+              <tbody id="tbody-${esc(ev.id)}">${rows}</tbody>
             </table>
           </div>
         </div>
@@ -600,22 +756,36 @@
       </div>`;
   }
 
-  const PLAT_ABBR = { ticketmaster:'TM', stubhub:'SH', vividseats:'VS', viagogo:'VG', seatgeek:'SG', gametime:'GT', seatpick:'SP', ticketsmarter:'TS' };
+  const PLAT_ABBR = {
+    ticketmaster:'TM', stubhub:'SH', vividseats:'VS', viagogo:'VG',
+    seatgeek:'SG', gametime:'GT', seatpick:'SP', ticketsmarter:'TS'
+  };
 
   function cmpPrice(p) {
     if (p.status !== 'available' || p.price == null) return Infinity;
     return p.currency === 'USD' && p.priceCAD ? p.priceCAD : p.price;
   }
 
-  function buildRows(platformPrices, ev) {
+  // ── Table body builder ────────────────────────────────────────────────────
+  // Renders real results for finished platforms, shimmer rows for pending ones.
+  function buildRows(platformPrices, ev, scrapingInProgress) {
     if (!platformPrices || !platformPrices.length) return skeletonRows();
     const sorted = [...platformPrices].sort((a, b) => cmpPrice(a) - cmpPrice(b));
-    return sorted.map((p, i) => renderRow(p, i)).join('');
+    let rows = sorted.map((p, i) => renderRow(p, i)).join('');
+
+    if (scrapingInProgress) {
+      const allPlats = ['ticketmaster','stubhub','vividseats','viagogo','seatgeek','gametime','seatpick','ticketsmarter'];
+      const done     = new Set(platformPrices.map(p => p.platform));
+      const pending  = allPlats.filter(p => !done.has(p));
+      if (pending.length) rows += skeletonRowsFor(pending, sorted.length);
+    }
+
+    return rows;
   }
 
   function renderRow(p, i) {
-    const best = i === 0 && p.status === 'available' && p.price != null;
-    const abbr = PLAT_ABBR[p.platform] || p.platform.slice(0,2).toUpperCase();
+    const best   = i === 0 && p.status === 'available' && p.price != null;
+    const abbr   = PLAT_ABBR[p.platform] || p.platform.slice(0,2).toUpperCase();
     const safeUrl = /^https?:\/\//.test(p.url) ? p.url : '#';
 
     let priceHtml, curHtml, bookHtml;
@@ -627,8 +797,8 @@
           ${esc(disp)}${best ? '<span class="best-badge">🥇 Best Deal</span>' : ''}
         </div>
         ${p.currencyNote ? `<div class="p-note">${esc(p.currencyNote)}</div>` : ''}`;
-      curHtml   = p.currency === 'USD' ? 'USD → CAD*' : 'CAD';
-      bookHtml  = `<a class="btn-book${best?' gold-btn':''}" href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">Book Now →</a>`;
+      curHtml  = p.currency === 'USD' ? 'USD → CAD*' : 'CAD';
+      bookHtml = `<a class="btn-book${best?' gold-btn':''}" href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">Book Now →</a>`;
     } else {
       priceHtml = `<span class="p-na">N/A${p.note ? ' — ' + esc(p.note) : ''}</span>`;
       curHtml   = '—';
@@ -639,9 +809,7 @@
 
     return `
       <tr${best ? ' class="best"' : ''}>
-        <td><div class="rank${best?' g':''}">
-          ${best ? '🥇' : i + 1}
-        </div></td>
+        <td><div class="rank${best?' g':''}">${best ? '🥇' : i + 1}</div></td>
         <td>
           <div class="plat-cell">
             <div class="plat-ico ${esc(p.platform)}">${abbr}</div>
@@ -655,16 +823,17 @@
       </tr>`;
   }
 
+  // Full shimmer — used when no data at all
   function skeletonRows() {
     const defs = [
-      { platform:'ticketmaster', name:'Ticketmaster', abbr:'TM' },
-      { platform:'stubhub',      name:'StubHub',      abbr:'SH' },
-      { platform:'vividseats',   name:'VividSeats',   abbr:'VS' },
-      { platform:'viagogo',      name:'Viagogo',      abbr:'VG' },
-      { platform:'seatgeek',     name:'SeatGeek',     abbr:'SG' },
-      { platform:'gametime',       name:'Gametime',       abbr:'GT' },
-      { platform:'seatpick',       name:'SeatPick',       abbr:'SP' },
-      { platform:'ticketsmarter',  name:'TicketSmarter',  abbr:'TS' },
+      { platform:'ticketmaster', abbr:'TM', name:'Ticketmaster' },
+      { platform:'stubhub',      abbr:'SH', name:'StubHub'      },
+      { platform:'vividseats',   abbr:'VS', name:'VividSeats'   },
+      { platform:'viagogo',      abbr:'VG', name:'Viagogo'      },
+      { platform:'seatgeek',     abbr:'SG', name:'SeatGeek'     },
+      { platform:'gametime',     abbr:'GT', name:'Gametime'     },
+      { platform:'seatpick',     abbr:'SP', name:'SeatPick'     },
+      { platform:'ticketsmarter',abbr:'TS', name:'TicketSmarter'},
     ];
     return defs.map((d, i) => `
       <tr>
@@ -678,6 +847,31 @@
         <td><div class="sh" style="width:55px"></div></td>
         <td><div class="sh" style="width:90px"></div></td>
       </tr>`).join('');
+  }
+
+  // Partial shimmer — for platforms not yet finished during active scrape
+  function skeletonRowsFor(platforms, startRank) {
+    const DEFS = {
+      ticketmaster:{name:'Ticketmaster',abbr:'TM'}, stubhub:{name:'StubHub',abbr:'SH'},
+      vividseats:{name:'VividSeats',abbr:'VS'},     viagogo:{name:'Viagogo',abbr:'VG'},
+      seatgeek:{name:'SeatGeek',abbr:'SG'},         gametime:{name:'Gametime',abbr:'GT'},
+      seatpick:{name:'SeatPick',abbr:'SP'},         ticketsmarter:{name:'TicketSmarter',abbr:'TS'},
+    };
+    return platforms.map((plat, i) => {
+      const d = DEFS[plat] || { name: plat, abbr: plat.slice(0,2).toUpperCase() };
+      return `
+        <tr>
+          <td><div class="rank">${startRank + i + 1}</div></td>
+          <td><div class="plat-cell">
+            <div class="plat-ico ${plat}">${d.abbr}</div>
+            <span class="plat-name">${d.name}</span>
+          </div></td>
+          <td><div class="sh" style="width:80px"></div></td>
+          <td><div class="sh" style="width:38px"></div></td>
+          <td><div class="sh" style="width:55px"></div></td>
+          <td><div class="sh" style="width:90px"></div></td>
+        </tr>`;
+    }).join('');
   }
 
   // ── Countdown ─────────────────────────────────────────────────────────────
