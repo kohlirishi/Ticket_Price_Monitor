@@ -114,6 +114,26 @@ function extractLowestPrice(texts) {
   return prices.length ? Math.min(...prices) : null;
 }
 
+function extractEmbeddedPrice(html) {
+  const patterns = [
+    /"lowPrice"\s*:\s*"?([\d.]+)"?/gi,
+    /"minPrice"\s*:\s*"?([\d.]+)"?/gi,
+    /"lowestPrice"\s*:\s*"?([\d.]+)"?/gi,
+    /"startingPrice"\s*:\s*"?([\d.]+)"?/gi,
+    /"basePrice"\s*:\s*"?([\d.]+)"?/gi,
+    /"price"\s*:\s*"?([\d.]+)"?/gi,
+    /from\s+\$\s*([\d,]+(?:\.\d{1,2})?)/gi,
+  ];
+  const prices = [];
+  for (const rx of patterns) {
+    for (const m of html.matchAll(rx)) {
+      const p = parseFloat(m[1].replace(/,/g, ''));
+      if (p > 0 && p < 25000) prices.push(p);
+    }
+  }
+  return prices.length ? Math.min(...prices) : null;
+}
+
 // Extract lowest price from JSON-LD structured data
 function extractJsonLdPrice(html) {
   const matches = html.matchAll(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
@@ -154,7 +174,10 @@ async function scrapeTicketmaster(browser, event) {
 
   // Step 1: plain HTTP fetch — fast, no bot detection for initial HTML
   try {
-    const { body } = await fetchUrl(event.ticketmasterUrl);
+    const { status, body } = await fetchUrl(event.ticketmasterUrl);
+    if (status === 401 || status === 403) {
+      return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
+    }
 
     // JSON-LD (most reliable — TM embeds structured event data)
     const jsonLdPrice = extractJsonLdPrice(body);
@@ -280,6 +303,23 @@ async function scrapeStubHub(browser, event) {
 async function scrapeVividSeats(browser, event) {
   const url = event.vividSeatsUrl || `https://www.vividseats.com/search?searchTerm=${encodeURIComponent(event.name)}`;
   const meta = { name: 'VividSeats', platform: 'vividseats', currency: 'USD', url };
+
+  try {
+    const { body } = await fetchUrl(url);
+    const jsonLdPrice = extractJsonLdPrice(body);
+    const lowestUsd = jsonLdPrice || extractEmbeddedPrice(body);
+    if (lowestUsd) {
+      const cadPrice = Math.round(lowestUsd * USD_TO_CAD * 100) / 100;
+      return {
+        ...meta, price: lowestUsd, priceCAD: cadPrice,
+        currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`,
+        status: 'available', lastUpdated: new Date().toISOString(),
+      };
+    }
+  } catch (err) {
+    console.warn('[VividSeats] fetch failed, falling back to Puppeteer:', err.message);
+  }
+
   let page;
   try {
     page = await newPage(browser);
