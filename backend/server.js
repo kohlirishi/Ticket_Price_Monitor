@@ -181,8 +181,74 @@ cron.schedule('*/10 * * * *', () => {
   });
 });
 
+// ─── FIFA World Cup 2026 Toronto Seed ────────────────────────────────────────
+async function seedFifaEvents() {
+  const FIFA_MATCHES = [
+    {
+      id: 'fifa-wc2026-toronto-match1-canada-bosnia',
+      name: 'FIFA World Cup 2026 – Canada vs Bosnia-Herzegovina',
+      date: 'Jun 12, 2026',
+      venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
+      ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
+      vividSeatsUrl: 'https://www.vividseats.com/world-cup-soccer-tickets-bmo-field-6-12-2026--sports-soccer/production/5080436',
+    },
+    {
+      id: 'fifa-wc2026-toronto-match2-ghana-panama',
+      name: 'FIFA World Cup 2026 – Ghana vs Panama',
+      date: 'Jun 17, 2026',
+      venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
+      ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
+      vividSeatsUrl: null,
+    },
+    {
+      id: 'fifa-wc2026-toronto-match3-germany-ivory-coast',
+      name: 'FIFA World Cup 2026 – Germany vs Ivory Coast',
+      date: 'Jun 20, 2026',
+      venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
+      ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
+      vividSeatsUrl: null,
+    },
+    {
+      id: 'fifa-wc2026-toronto-match4-panama-croatia',
+      name: 'FIFA World Cup 2026 – Panama vs Croatia',
+      date: 'Jun 23, 2026',
+      venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
+      ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
+      vividSeatsUrl: null,
+    },
+    {
+      id: 'fifa-wc2026-toronto-match5-senegal-iraq',
+      name: 'FIFA World Cup 2026 – Senegal vs Iraq',
+      date: 'Jun 26, 2026',
+      venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
+      ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
+      vividSeatsUrl: null,
+    },
+    {
+      id: 'fifa-wc2026-toronto-match6-r32',
+      name: 'FIFA World Cup 2026 – Round of 32 (Group K 2nd vs Group L 2nd)',
+      date: 'Jul 2, 2026',
+      venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
+      ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
+      vividSeatsUrl: null,
+    },
+  ];
+
+  const existing = db.getEvents();
+  let delay = 6000;
+
+  for (const match of FIFA_MATCHES) {
+    if (existing.find(e => e.id === match.id)) continue;
+    db.addEvent({ ...match, addedAt: new Date().toISOString() });
+    console.log('[seed] FIFA match added:', match.name);
+    setTimeout(() => scrapeAndStore(match.id), delay);
+    delay += 3000; // stagger scrapes so browser doesn't overlap
+  }
+}
+
 // ─── Start ───────────────────────────────────────────────────────────────────
 app.listen(PORT, async () => {
   console.log(`Toronto Ticket Tracker backend on port ${PORT}`);
   await seedDefaultEvent();
+  await seedFifaEvents();
 });
