@@ -379,7 +379,7 @@
   <div class="status-bar" id="statusBar" style="display:none">
     <div class="s-left">
       <span class="dot"></span>
-      <span id="statusTxt">Connected — prices refresh every 60 s</span>
+      <span id="statusTxt">Connected — prices refresh every 5 min</span>
     </div>
     <div>Next refresh in <span class="cd" id="cd">1:00</span></div>
   </div>
@@ -404,7 +404,7 @@
   // ── State ─────────────────────────────────────────────────────────────────
   let events        = [];
   let prices        = {};
-  let cdSec         = 60;
+  let cdSec         = 300; // 5 min — matches backend scrape interval
   let cdTimer       = null;
   let expandedCards = new Set(); // tracks which event IDs are expanded
 
@@ -682,13 +682,13 @@
 
   // ── Countdown ─────────────────────────────────────────────────────────────
   function resetCd() {
-    cdSec = 60;
+    cdSec = 300;
     if (!cdTimer) cdTimer = setInterval(tickCd, 1000);
     drawCd();
   }
   function tickCd() {
     cdSec--;
-    if (cdSec <= 0) { cdSec = 60; loadAll(); }
+    if (cdSec <= 0) { cdSec = 300; loadAll(); }
     drawCd();
   }
   function drawCd() {

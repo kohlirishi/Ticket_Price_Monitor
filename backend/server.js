@@ -152,8 +152,9 @@ app.post('/api/scrape/:eventId', async (req, res) => {
   scrapeAndStore(req.params.eventId).catch(console.error);
 });
 
-// ─── Cron: scrape all events every 60 seconds ─────────────────────────────
-cron.schedule('* * * * *', async () => {
+// ─── Cron: scrape all events every 5 minutes ──────────────────────────────
+// 60s was too short — 8 platforms × (scrape + delays) takes 3-4 min per event
+cron.schedule('*/5 * * * *', async () => {
   if (scrapeRunning) {
     console.log('[cron] Previous scrape still running — skipping');
     return;

@@ -5,7 +5,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
 
 const USD_TO_CAD = 1.36;
-const DELAY_BETWEEN_SITES_MS = 5000;
+const DELAY_BETWEEN_SITES_MS = 2000; // 2s between sites — saves ~24s per full cycle
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -189,8 +189,8 @@ async function scrapeTicketmaster(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(event.ticketmasterUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-    await sleep(5000);
+    await page.goto(event.ticketmasterUrl, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
 
     const html = await page.content();
     const jsonLdPrice = extractJsonLdPrice(html);
@@ -234,8 +234,8 @@ async function scrapeStubHub(browser, event) {
   try {
     page = await newPage(browser);
     // networkidle2 + long wait gives stealth time to pass JS challenge
-    await page.goto(meta.url, { waitUntil: 'networkidle2', timeout: 40000 });
-    await sleep(5000);
+    await page.goto(meta.url, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
 
     if (await isBlocked(page)) {
       return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
@@ -282,8 +282,8 @@ async function scrapeVividSeats(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 35000 });
-    await sleep(4000);
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
 
     const texts = await page.evaluate(() => {
       const found = [];
@@ -328,8 +328,8 @@ async function scrapeViagogo(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(meta.url, { waitUntil: 'networkidle2', timeout: 40000 });
-    await sleep(5000);
+    await page.goto(meta.url, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
 
     if (await isBlocked(page)) {
       return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
@@ -405,8 +405,8 @@ async function scrapeSeatGeek(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(webUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-    await sleep(4000);
+    await page.goto(webUrl, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
 
     const html = await page.content();
     const jsonLdPrice = extractJsonLdPrice(html);
@@ -468,8 +468,8 @@ async function scrapeGametime(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-    await sleep(4000);
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
     if (await isBlocked(page)) return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
 
     const html = await page.content();
@@ -538,8 +538,8 @@ async function scrapeSeatPick(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-    await sleep(4000);
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
     if (await isBlocked(page)) return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
 
     const html = await page.content();
@@ -613,8 +613,8 @@ async function scrapeTicketSmarter(browser, event) {
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-    await sleep(4000);
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 25000 });
+    await sleep(2500);
     if (await isBlocked(page)) return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
 
     const html = await page.content();
