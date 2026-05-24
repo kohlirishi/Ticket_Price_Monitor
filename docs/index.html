@@ -211,6 +211,8 @@
     .plat-ico.vividseats{background:#0058a3;color:#fff}
     .plat-ico.viagogo{background:#e31837;color:#fff}
     .plat-ico.seatgeek{background:#ea352d;color:#fff}
+    .plat-ico.gametime{background:#00b14f;color:#fff}
+    .plat-ico.seatpick{background:#6c3fc5;color:#fff}
     .plat-name{font-weight:600;font-size:.86rem}
 
     /* price */
@@ -301,7 +303,7 @@
     </svg>
     <div>
       <div class="hdr-title">Toronto Ticket Tracker</div>
-      <div class="hdr-sub">Live price comparison across 5 platforms</div>
+      <div class="hdr-sub">Live price comparison across 7 platforms</div>
     </div>
   </div>
   <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
@@ -527,7 +529,7 @@
       </div>`;
   }
 
-  const PLAT_ABBR = { ticketmaster:'TM', stubhub:'SH', vividseats:'VS', viagogo:'VG', seatgeek:'SG' };
+  const PLAT_ABBR = { ticketmaster:'TM', stubhub:'SH', vividseats:'VS', viagogo:'VG', seatgeek:'SG', gametime:'GT', seatpick:'SP' };
 
   function cmpPrice(p) {
     if (p.status !== 'available' || p.price == null) return Infinity;
@@ -589,6 +591,8 @@
       { platform:'vividseats',   name:'VividSeats',   abbr:'VS' },
       { platform:'viagogo',      name:'Viagogo',      abbr:'VG' },
       { platform:'seatgeek',     name:'SeatGeek',     abbr:'SG' },
+      { platform:'gametime',     name:'Gametime',     abbr:'GT' },
+      { platform:'seatpick',     name:'SeatPick',     abbr:'SP' },
     ];
     return defs.map((d, i) => `
       <tr>

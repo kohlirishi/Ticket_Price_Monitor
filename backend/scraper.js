@@ -434,6 +434,144 @@ async function scrapeSeatGeek(browser, event) {
   }
 }
 
+// ─── Gametime ─────────────────────────────────────────────────────────────────
+async function scrapeGametime(browser, event) {
+  const searchQuery = encodeURIComponent(event.name);
+  const searchUrl = `https://gametime.co/search?query=${searchQuery}`;
+  const meta = { name: 'Gametime', platform: 'gametime', currency: 'USD', url: searchUrl };
+
+  // Step 1: plain fetch — look for JSON-LD or embedded price data
+  try {
+    const { body } = await fetchUrl(searchUrl);
+    const jsonLdPrice = extractJsonLdPrice(body);
+    if (jsonLdPrice) {
+      const cadPrice = Math.round(jsonLdPrice * USD_TO_CAD * 100) / 100;
+      return { ...meta, price: jsonLdPrice, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+    const patterns = [/"minPrice"\s*:\s*([\d.]+)/, /"lowestPrice"\s*:\s*([\d.]+)/, /"price"\s*:\s*"?([\d.]+)"?/];
+    for (const rx of patterns) {
+      const m = body.match(rx);
+      if (m) {
+        const p = parseFloat(m[1]);
+        if (p > 0 && p < 25000) {
+          const cadPrice = Math.round(p * USD_TO_CAD * 100) / 100;
+          console.log('[Gametime] fetch price:', p);
+          return { ...meta, price: p, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Gametime] fetch failed:', err.message);
+  }
+
+  // Step 2: Puppeteer fallback
+  let page;
+  try {
+    page = await newPage(browser);
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+    await sleep(4000);
+    if (await isBlocked(page)) return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
+
+    const html = await page.content();
+    const jsonLdPrice = extractJsonLdPrice(html);
+    if (jsonLdPrice) {
+      const cadPrice = Math.round(jsonLdPrice * USD_TO_CAD * 100) / 100;
+      return { ...meta, price: jsonLdPrice, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+
+    const texts = await page.evaluate(() => {
+      const found = [];
+      for (const sel of ['[data-testid*="price"]', '[class*="price"]', '[class*="Price"]', '[class*="ticket"]']) {
+        for (const el of document.querySelectorAll(sel)) {
+          const t = el.textContent.trim();
+          if (t.includes('$') && /\d/.test(t)) found.push(t);
+        }
+      }
+      found.push(...(document.body.innerText.match(/\$\s*[\d,]+(?:\.\d{2})?/g) || []).slice(0, 15));
+      return found;
+    });
+
+    const lowestUsd = extractLowestPrice(texts);
+    if (lowestUsd) {
+      const cadPrice = Math.round(lowestUsd * USD_TO_CAD * 100) / 100;
+      return { ...meta, price: lowestUsd, priceCAD: cadPrice, currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+    return { ...meta, price: null, status: 'unavailable', note: 'Visit site to check prices', lastUpdated: new Date().toISOString() };
+  } catch (err) {
+    console.error('[Gametime]', err.message);
+    return { ...meta, price: null, status: 'unavailable', note: 'Scrape failed — check manually', lastUpdated: new Date().toISOString() };
+  } finally {
+    if (page) await page.close().catch(() => {});
+  }
+}
+
+// ─── SeatPick ─────────────────────────────────────────────────────────────────
+async function scrapeSeatPick(browser, event) {
+  const searchQuery = encodeURIComponent(event.name + ' toronto');
+  const searchUrl = `https://seatpick.com/search?q=${searchQuery}`;
+  const meta = { name: 'SeatPick', platform: 'seatpick', currency: 'CAD', url: searchUrl };
+
+  // Step 1: plain fetch
+  try {
+    const { body } = await fetchUrl(searchUrl);
+    const jsonLdPrice = extractJsonLdPrice(body);
+    if (jsonLdPrice) {
+      console.log('[SeatPick] JSON-LD price:', jsonLdPrice);
+      return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+    const patterns = [/"minPrice"\s*:\s*([\d.]+)/, /"lowestPrice"\s*:\s*([\d.]+)/, /"lowest_price"\s*:\s*([\d.]+)/];
+    for (const rx of patterns) {
+      const m = body.match(rx);
+      if (m) {
+        const p = parseFloat(m[1]);
+        if (p > 0 && p < 25000) {
+          console.log('[SeatPick] fetch price:', p);
+          return { ...meta, price: p, status: 'available', lastUpdated: new Date().toISOString() };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[SeatPick] fetch failed:', err.message);
+  }
+
+  // Step 2: Puppeteer fallback
+  let page;
+  try {
+    page = await newPage(browser);
+    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+    await sleep(4000);
+    if (await isBlocked(page)) return { ...meta, price: null, status: 'unavailable', note: 'Bot protection — check manually', lastUpdated: new Date().toISOString() };
+
+    const html = await page.content();
+    const jsonLdPrice = extractJsonLdPrice(html);
+    if (jsonLdPrice) return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
+
+    const texts = await page.evaluate(() => {
+      const found = [];
+      for (const sel of [
+        '[data-testid*="price"]', '[class*="price"]', '[class*="Price"]',
+        '[class*="ticket"]', '[class*="listing"]', '[class*="event"]',
+      ]) {
+        for (const el of document.querySelectorAll(sel)) {
+          const t = el.textContent.trim();
+          if (t.includes('$') && /\d/.test(t)) found.push(t);
+        }
+      }
+      found.push(...(document.body.innerText.match(/(from|lowest|starting)\s+\$\s*[\d,]+/gi) || []));
+      found.push(...(document.body.innerText.match(/\$\s*[\d,]+(?:\.\d{2})?/g) || []).slice(0, 15));
+      return found;
+    });
+
+    const price = extractLowestPrice(texts);
+    return { ...meta, price, status: price ? 'available' : 'unavailable', note: price ? null : 'Visit site to check prices', lastUpdated: new Date().toISOString() };
+  } catch (err) {
+    console.error('[SeatPick]', err.message);
+    return { ...meta, price: null, status: 'unavailable', note: 'Scrape failed — check manually', lastUpdated: new Date().toISOString() };
+  } finally {
+    if (page) await page.close().catch(() => {});
+  }
+}
+
 // ─── Orchestrator ────────────────────────────────────────────────────────────
 async function scrapeEvent(event) {
   const scrapers = [
@@ -442,6 +580,8 @@ async function scrapeEvent(event) {
     browser => scrapeVividSeats(browser, event),
     browser => scrapeViagogo(browser, event),
     browser => scrapeSeatGeek(browser, event),
+    browser => scrapeGametime(browser, event),
+    browser => scrapeSeatPick(browser, event),
   ];
 
   let browser;
