@@ -44,6 +44,15 @@ function addEvent(event) {
   return event;
 }
 
+function updateEvent(id, patch) {
+  const db = readDb();
+  const idx = db.events.findIndex(e => e.id === id);
+  if (idx === -1) return null;
+  db.events[idx] = { ...db.events[idx], ...patch };
+  writeDb(db);
+  return db.events[idx];
+}
+
 function removeEvent(id) {
   const db = readDb();
   db.events = db.events.filter(e => e.id !== id);
@@ -63,4 +72,4 @@ function setPrices(eventId, prices) {
   writeDb(db);
 }
 
-module.exports = { getEvents, getEvent, addEvent, removeEvent, getPrices, setPrices };
+module.exports = { getEvents, getEvent, addEvent, updateEvent, removeEvent, getPrices, setPrices };

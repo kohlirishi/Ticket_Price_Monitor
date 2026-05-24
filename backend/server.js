@@ -395,7 +395,7 @@ async function seedFifaEvents() {
       date: 'Jun 17, 2026',
       venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
       ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
-      vividSeatsUrl: null,
+      vividSeatsUrl: 'https://www.vividseats.com/world-cup-soccer-tickets-bmo-field-6-17-2026--sports-soccer/production/5080464',
     },
     {
       id: 'fifa-wc2026-toronto-match3-germany-ivory-coast',
@@ -403,7 +403,7 @@ async function seedFifaEvents() {
       date: 'Jun 20, 2026',
       venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
       ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
-      vividSeatsUrl: null,
+      vividSeatsUrl: 'https://www.vividseats.com/world-cup-soccer-tickets-bmo-field-6-20-2026--sports-soccer/production/5080485',
     },
     {
       id: 'fifa-wc2026-toronto-match4-panama-croatia',
@@ -411,7 +411,7 @@ async function seedFifaEvents() {
       date: 'Jun 23, 2026',
       venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
       ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
-      vividSeatsUrl: null,
+      vividSeatsUrl: 'https://www.vividseats.com/world-cup-soccer-tickets-bmo-field-6-23-2026--sports-soccer/production/5080525',
     },
     {
       id: 'fifa-wc2026-toronto-match5-senegal-iraq',
@@ -419,7 +419,7 @@ async function seedFifaEvents() {
       date: 'Jun 26, 2026',
       venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
       ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
-      vividSeatsUrl: null,
+      vividSeatsUrl: 'https://www.vividseats.com/world-cup-soccer-tickets-bmo-field-6-26-2026--sports-soccer/production/5080677',
     },
     {
       id: 'fifa-wc2026-toronto-match6-r32',
@@ -427,13 +427,20 @@ async function seedFifaEvents() {
       date: 'Jul 2, 2026',
       venue: 'BMO Field (Toronto Stadium), Toronto, Ontario',
       ticketmasterUrl: 'https://www.ticketmaster.ca/2026-world-cup-tickets/artist/4067734',
-      vividSeatsUrl: null,
+      vividSeatsUrl: 'https://www.vividseats.com/world-cup-soccer-tickets-bmo-field-7-2-2026--sports-soccer/production/5080833',
     },
   ];
 
   const existing = db.getEvents();
   for (const match of FIFA_MATCHES) {
-    if (existing.find(e => e.id === match.id)) continue;
+    const existingMatch = existing.find(e => e.id === match.id);
+    if (existingMatch) {
+      if (existingMatch.vividSeatsUrl !== match.vividSeatsUrl) {
+        db.updateEvent(match.id, { vividSeatsUrl: match.vividSeatsUrl });
+        console.log('[seed] FIFA match updated:', match.name);
+      }
+      continue;
+    }
     db.addEvent({ ...match, addedAt: new Date().toISOString() });
     console.log('[seed] FIFA match added:', match.name);
     enqueueScrape(match.id);
