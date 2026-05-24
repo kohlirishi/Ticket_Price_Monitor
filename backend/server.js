@@ -78,6 +78,24 @@ let queueRunning = false;
 const scrapeQueue = [];
 const queuedEventIds = new Set();
 const activeScrapeIds = new Set();
+const activeScrapeStartedAt = new Map();
+const STALE_ACTIVE_SCRAPE_MS = 15 * 60 * 1000;
+
+function clearActiveScrape(eventId) {
+  activeScrapeIds.delete(eventId);
+  activeScrapeStartedAt.delete(eventId);
+}
+
+function isActiveScrape(eventId) {
+  if (!activeScrapeIds.has(eventId)) return false;
+  const startedAt = activeScrapeStartedAt.get(eventId) || 0;
+  if (Date.now() - startedAt > STALE_ACTIVE_SCRAPE_MS) {
+    console.warn('[scrape] clearing stale active flag for', eventId);
+    clearActiveScrape(eventId);
+    return false;
+  }
+  return true;
+}
 
 function markQueued(eventId, queuePosition) {
   const existing = db.getPrices(eventId);
@@ -105,7 +123,7 @@ function refreshQueuePositions() {
 
 function enqueueScrape(eventId) {
   if (!db.getEvent(eventId)) return false;
-  if (queuedEventIds.has(eventId) || activeScrapeIds.has(eventId)) return false;
+  if (queuedEventIds.has(eventId) || isActiveScrape(eventId)) return false;
   queuedEventIds.add(eventId);
   scrapeQueue.push(eventId);
   markQueued(eventId, scrapeQueue.length);
@@ -131,8 +149,9 @@ async function runScrapeQueue() {
 async function scrapeAndStore(eventId) {
   const event = db.getEvent(eventId);
   if (!event) return;
-  if (activeScrapeIds.has(eventId)) return;
+  if (isActiveScrape(eventId)) return;
   activeScrapeIds.add(eventId);
+  activeScrapeStartedAt.set(eventId, Date.now());
 
   console.log(`[scrape] ${event.name}`);
 
@@ -202,7 +221,7 @@ async function scrapeAndStore(eventId) {
         completedPlatforms: TOTAL_PLATFORMS,
       });
     }
-    activeScrapeIds.delete(eventId);
+    clearActiveScrape(eventId);
   }
 }
 
@@ -318,10 +337,15 @@ app.get('/api/prices/:eventId', (req, res) => {
 });
 
 app.post('/api/scrape/:eventId', async (req, res) => {
-  if (!db.getEvent(req.params.eventId)) {
+  const eventId = req.params.eventId;
+  if (!db.getEvent(eventId)) {
     return res.status(404).json({ error: 'Event not found' });
   }
-  const queued = enqueueScrape(req.params.eventId);
+  const pd = db.getPrices(eventId);
+  if (pd && !pd.scrapingInProgress && activeScrapeIds.has(eventId)) {
+    clearActiveScrape(eventId);
+  }
+  const queued = enqueueScrape(eventId);
   res.json({ message: queued ? 'Scrape queued' : 'Scrape already queued or running' });
 });
 
