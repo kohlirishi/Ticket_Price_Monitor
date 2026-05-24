@@ -1,5 +1,6 @@
 const https = require('https');
 const http = require('http');
+const zlib = require('zlib');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
@@ -29,9 +30,20 @@ function fetchUrl(url, extraHeaders = {}) {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
         return fetchUrl(res.headers.location, extraHeaders).then(resolve).catch(reject);
       }
-      let body = '';
-      res.on('data', chunk => { body += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      const chunks = [];
+      res.on('data', chunk => { chunks.push(chunk); });
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks);
+        const encoding = String(res.headers['content-encoding'] || '').toLowerCase();
+        const done = (err, decoded) => {
+          if (err) return reject(err);
+          resolve({ status: res.statusCode, body: decoded.toString('utf8'), headers: res.headers });
+        };
+        if (encoding.includes('br')) return zlib.brotliDecompress(raw, done);
+        if (encoding.includes('gzip')) return zlib.gunzip(raw, done);
+        if (encoding.includes('deflate')) return zlib.inflate(raw, done);
+        done(null, raw);
+      });
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
@@ -132,6 +144,11 @@ function extractEmbeddedPrice(html) {
     }
   }
   return prices.length ? Math.min(...prices) : null;
+}
+
+function extractVividProductionId(url) {
+  const match = String(url || '').match(/\/production\/(\d+)/);
+  return match ? match[1] : null;
 }
 
 // Extract lowest price from JSON-LD structured data
@@ -303,6 +320,28 @@ async function scrapeStubHub(browser, event) {
 async function scrapeVividSeats(browser, event) {
   const url = event.vividSeatsUrl || `https://www.vividseats.com/search?searchTerm=${encodeURIComponent(event.name)}`;
   const meta = { name: 'VividSeats', platform: 'vividseats', currency: 'USD', url };
+
+  const productionId = extractVividProductionId(event.vividSeatsUrl);
+  if (productionId) {
+    try {
+      const apiUrl = `https://www.vividseats.com/hermes/api/v1/productions/${productionId}`;
+      const { status, body } = await fetchUrl(apiUrl, { Accept: 'application/json' });
+      if (status === 200) {
+        const data = JSON.parse(body);
+        const lowestUsd = data.minAipPrice || data.minPrice || data.avgPrice || null;
+        if (lowestUsd) {
+          const cadPrice = Math.round(lowestUsd * USD_TO_CAD * 100) / 100;
+          return {
+            ...meta, price: lowestUsd, priceCAD: cadPrice,
+            currencyNote: `≈ CAD $${cadPrice.toFixed(2)} (est. 1 USD = 1.36 CAD)`,
+            status: 'available', lastUpdated: new Date().toISOString(),
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[VividSeats] API failed, falling back to page fetch:', err.message);
+    }
+  }
 
   try {
     const { body } = await fetchUrl(url);
