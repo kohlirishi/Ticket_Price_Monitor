@@ -74,10 +74,39 @@ function clearStaleScrapingFlags() {
 
 // ─── Scraping ────────────────────────────────────────────────────────────────
 let scrapeRunning = false;
+let queueRunning = false;
+const scrapeQueue = [];
+const queuedEventIds = new Set();
+const activeScrapeIds = new Set();
+
+function enqueueScrape(eventId) {
+  if (!db.getEvent(eventId)) return false;
+  if (queuedEventIds.has(eventId) || activeScrapeIds.has(eventId)) return false;
+  queuedEventIds.add(eventId);
+  scrapeQueue.push(eventId);
+  runScrapeQueue().catch(err => console.error('[queue]', err.message));
+  return true;
+}
+
+async function runScrapeQueue() {
+  if (queueRunning) return;
+  queueRunning = true;
+  try {
+    while (scrapeQueue.length) {
+      const eventId = scrapeQueue.shift();
+      queuedEventIds.delete(eventId);
+      await scrapeAndStore(eventId);
+    }
+  } finally {
+    queueRunning = false;
+  }
+}
 
 async function scrapeAndStore(eventId) {
   const event = db.getEvent(eventId);
   if (!event) return;
+  if (activeScrapeIds.has(eventId)) return;
+  activeScrapeIds.add(eventId);
 
   console.log(`[scrape] ${event.name}`);
 
@@ -131,6 +160,17 @@ async function scrapeAndStore(eventId) {
     if (final) {
       db.setPrices(eventId, { ...final, scrapingInProgress: false, completedPlatforms: TOTAL_PLATFORMS });
     }
+    activeScrapeIds.delete(eventId);
+  }
+}
+
+function queueMissingInitialScrapes() {
+  for (const ev of db.getEvents()) {
+    const pd = db.getPrices(ev.id);
+    if (!pd || !pd.lastUpdated) {
+      console.log('[startup] queued first scrape for', ev.name);
+      enqueueScrape(ev.id);
+    }
   }
 }
 
@@ -151,7 +191,7 @@ async function seedDefaultEvent() {
   };
   db.addEvent(defaultEvent);
   console.log('[seed] Default event added:', defaultEvent.name);
-  setTimeout(() => scrapeAndStore(DEFAULT_ID), 4000);
+  enqueueScrape(DEFAULT_ID);
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -235,8 +275,8 @@ app.post('/api/scrape/:eventId', async (req, res) => {
   if (!db.getEvent(req.params.eventId)) {
     return res.status(404).json({ error: 'Event not found' });
   }
-  res.json({ message: 'Scrape initiated' });
-  scrapeAndStore(req.params.eventId).catch(console.error);
+  const queued = enqueueScrape(req.params.eventId);
+  res.json({ message: queued ? 'Scrape queued' : 'Scrape already queued or running' });
 });
 
 // ─── Cron: scrape all events every 5 minutes ──────────────────────────────
@@ -248,8 +288,9 @@ cron.schedule('*/5 * * * *', async () => {
   scrapeRunning = true;
   try {
     for (const event of db.getEvents()) {
-      await scrapeAndStore(event.id);
+      enqueueScrape(event.id);
     }
+    await runScrapeQueue();
   } finally {
     scrapeRunning = false;
   }
@@ -321,14 +362,11 @@ async function seedFifaEvents() {
   ];
 
   const existing = db.getEvents();
-  let delay = 6000;
-
   for (const match of FIFA_MATCHES) {
     if (existing.find(e => e.id === match.id)) continue;
     db.addEvent({ ...match, addedAt: new Date().toISOString() });
     console.log('[seed] FIFA match added:', match.name);
-    setTimeout(() => scrapeAndStore(match.id), delay);
-    delay += 3000;
+    enqueueScrape(match.id);
   }
 }
 
@@ -338,4 +376,5 @@ app.listen(PORT, async () => {
   clearStaleScrapingFlags();
   await seedDefaultEvent();
   await seedFifaEvents();
+  queueMissingInitialScrapes();
 });

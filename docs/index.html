@@ -404,6 +404,7 @@
   let cdSec         = 300;
   let cdTimer       = null;
   let expandedCards = new Set();
+  let firstScrapeRequested = new Set();
 
   // Per-event polling state:
   // { [eventId]: { polling: bool, pollTimer: id, timeoutTimer: id, timedOut: bool } }
@@ -450,6 +451,8 @@
         const pd = prices[ev.id];
         if (pd && pd.scrapingInProgress) {
           startPolling(ev.id);
+        } else if (!pd || !pd.lastUpdated) {
+          ensureFirstScrape(ev.id);
         } else {
           stopPolling(ev.id);
         }
@@ -458,6 +461,23 @@
       document.getElementById('connErr').classList.add('show');
       document.getElementById('apiDisplay').textContent = API_BASE;
     }
+  }
+
+  function ensureFirstScrape(eventId) {
+    if (firstScrapeRequested.has(eventId)) return;
+    firstScrapeRequested.add(eventId);
+    if (!prices[eventId]) prices[eventId] = { prices: [] };
+    prices[eventId].scrapingInProgress = true;
+    prices[eventId].completedPlatforms = 0;
+    prices[eventId].totalPlatforms = 8;
+    updateCard(eventId);
+    apiPost('/api/scrape/' + eventId, {})
+      .then(() => startPolling(eventId))
+      .catch(() => {
+        firstScrapeRequested.delete(eventId);
+        prices[eventId].scrapingInProgress = false;
+        updateCard(eventId);
+      });
   }
 
   // ── Remove event ──────────────────────────────────────────────────────────
@@ -626,8 +646,8 @@
       return `<span class="pill-loading"><span class="spin">⟳</span> ${done}&thinsp;/&thinsp;${total} loaded</span>`;
     }
 
-    // Never scraped yet (no price record at all)
-    if (!pd || !pd.prices || !pd.prices.length) {
+    // Never scraped yet (no price record or no attempt timestamp)
+    if (!pd || !pd.lastUpdated) {
       return `<span class="pill-chk">🕐 Waiting for first scrape…</span>`;
     }
 
@@ -723,7 +743,9 @@
   // ── Table body builder ────────────────────────────────────────────────────
   // Renders real results for finished platforms, shimmer rows for pending ones.
   function buildRows(platformPrices, ev, scrapingInProgress) {
-    if (!platformPrices || !platformPrices.length) return skeletonRows();
+    if (!platformPrices || !platformPrices.length) {
+      return scrapingInProgress ? skeletonRows() : unavailableRows(ev);
+    }
     const sorted = [...platformPrices].sort((a, b) => cmpPrice(a) - cmpPrice(b));
     let rows = sorted.map((p, i) => renderRow(p, i)).join('');
 
@@ -801,6 +823,28 @@
         <td><div class="sh" style="width:55px"></div></td>
         <td><div class="sh" style="width:90px"></div></td>
       </tr>`).join('');
+  }
+
+  function unavailableRows(ev) {
+    const query = encodeURIComponent(ev.name + ' Toronto');
+    const defs = [
+      { platform:'ticketmaster', name:'Ticketmaster', url:ev.ticketmasterUrl || `https://www.ticketmaster.ca/search?q=${query}` },
+      { platform:'stubhub', name:'StubHub', url:`https://www.stubhub.ca/search?q=${query}` },
+      { platform:'vividseats', name:'VividSeats', url:ev.vividSeatsUrl || `https://www.vividseats.com/search?searchTerm=${query}` },
+      { platform:'viagogo', name:'Viagogo', url:`https://www.viagogo.ca/search?q=${query}` },
+      { platform:'seatgeek', name:'SeatGeek', url:`https://seatgeek.com/search?q=${query}` },
+      { platform:'gametime', name:'Gametime', url:`https://gametime.co/search?query=${query}` },
+      { platform:'seatpick', name:'SeatPick', url:`https://seatpick.com/search?q=${query}` },
+      { platform:'ticketsmarter', name:'TicketSmarter', url:`https://www.ticketsmarter.com/search?q=${query}` },
+    ];
+    return defs.map((d, i) => renderRow({
+      ...d,
+      price: null,
+      status: 'unavailable',
+      currency: 'CAD',
+      note: 'No scraped price yet',
+      lastUpdated: null,
+    }, i)).join('');
   }
 
   // Partial shimmer — for platforms not yet finished during active scrape

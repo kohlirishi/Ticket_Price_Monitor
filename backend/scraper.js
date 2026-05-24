@@ -6,6 +6,7 @@ puppeteerExtra.use(StealthPlugin());
 
 const USD_TO_CAD = 1.36;
 const DELAY_BETWEEN_SITES_MS = 2000; // 2s between sites — saves ~24s per full cycle
+const SCRAPER_CONCURRENCY = 2;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -674,12 +675,18 @@ async function scrapeEvent(event, onPlatformComplete) {
   try {
     browser = await launchBrowser();
     const results = [];
-    await Promise.allSettled(scrapers.map(fn =>
-      fn(browser).then(result => {
-        results.push(result);
-        if (onPlatformComplete) onPlatformComplete(result);
-      })
-    ));
+    for (let i = 0; i < scrapers.length; i += SCRAPER_CONCURRENCY) {
+      const batch = scrapers.slice(i, i + SCRAPER_CONCURRENCY);
+      await Promise.allSettled(batch.map(fn =>
+        fn(browser).then(result => {
+          results.push(result);
+          if (onPlatformComplete) onPlatformComplete(result);
+        }).catch(err => {
+          console.error('[scraper batch]', err.message);
+        })
+      ));
+      if (i + SCRAPER_CONCURRENCY < scrapers.length) await sleep(DELAY_BETWEEN_SITES_MS);
+    }
     return results;
   } finally {
     if (browser) await browser.close().catch(err => console.error('Browser close:', err.message));
