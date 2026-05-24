@@ -373,26 +373,6 @@
     ⚠️ Cannot reach backend at <strong id="apiDisplay"></strong> — make sure it's deployed and the URL is updated in this file.
   </div>
 
-  <!-- Add event panel -->
-  <div class="add-panel">
-    <div class="panel-title">Track a New Event</div>
-    <div class="form-row">
-      <div class="fg" style="flex:2.2">
-        <label>Ticketmaster CA URL *</label>
-        <input id="tmUrl" type="url"
-          placeholder="https://www.ticketmaster.ca/event/..."
-          onkeydown="if(event.key==='Enter')addEvent()"/>
-      </div>
-      <div class="fg" style="flex:2.2">
-        <label>VividSeats URL <span style="opacity:.5;font-weight:400">(optional)</span></label>
-        <input id="vsUrl" type="url"
-          placeholder="https://www.vividseats.com/..."
-          onkeydown="if(event.key==='Enter')addEvent()"/>
-      </div>
-      <button class="btn-add" id="addBtn" onclick="addEvent()">+ Add Event</button>
-    </div>
-  </div>
-
   <!-- Status bar -->
   <div class="status-bar" id="statusBar" style="display:none">
     <div class="s-left">
@@ -477,32 +457,6 @@
     } catch {
       document.getElementById('connErr').classList.add('show');
       document.getElementById('apiDisplay').textContent = API_BASE;
-    }
-  }
-
-  // ── Add event ─────────────────────────────────────────────────────────────
-  async function addEvent() {
-    const tm = document.getElementById('tmUrl').value.trim();
-    const vs = document.getElementById('vsUrl').value.trim();
-    if (!tm) { toast('Please enter a Ticketmaster URL', 'err'); return; }
-    if (!tm.includes('ticketmaster')) { toast('Please enter a Ticketmaster CA URL', 'err'); return; }
-
-    const btn = document.getElementById('addBtn');
-    btn.disabled = true; btn.textContent = 'Adding…';
-    try {
-      const ev = await apiPost('/api/events', { ticketmasterUrl: tm, vividSeatsUrl: vs || null });
-      events.push(ev);
-      prices[ev.id] = { prices: [], scrapingInProgress: true, completedPlatforms: 0, totalPlatforms: 8 };
-      document.getElementById('tmUrl').value = '';
-      document.getElementById('vsUrl').value = '';
-      render();
-      toast('Event added — watching prices load…', 'ok');
-      // Start polling immediately for the new event
-      startPolling(ev.id);
-    } catch (e) {
-      toast('Failed: ' + e.message, 'err');
-    } finally {
-      btn.disabled = false; btn.textContent = '+ Add Event';
     }
   }
 
