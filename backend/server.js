@@ -79,11 +79,36 @@ const scrapeQueue = [];
 const queuedEventIds = new Set();
 const activeScrapeIds = new Set();
 
+function markQueued(eventId, queuePosition) {
+  const existing = db.getPrices(eventId);
+  db.setPrices(eventId, {
+    lastUpdated: existing?.lastUpdated || null,
+    prices: existing?.prices || [],
+    scrapingInProgress: true,
+    queued: true,
+    queuePosition,
+    completedPlatforms: existing?.completedPlatforms || 0,
+    totalPlatforms: TOTAL_PLATFORMS,
+  });
+  scrapeStatus[eventId] = {
+    running: false,
+    queued: true,
+    queuePosition,
+    completed: existing?.completedPlatforms || 0,
+    total: TOTAL_PLATFORMS,
+  };
+}
+
+function refreshQueuePositions() {
+  scrapeQueue.forEach((eventId, index) => markQueued(eventId, index + 1));
+}
+
 function enqueueScrape(eventId) {
   if (!db.getEvent(eventId)) return false;
   if (queuedEventIds.has(eventId) || activeScrapeIds.has(eventId)) return false;
   queuedEventIds.add(eventId);
   scrapeQueue.push(eventId);
+  markQueued(eventId, scrapeQueue.length);
   runScrapeQueue().catch(err => console.error('[queue]', err.message));
   return true;
 }
@@ -95,6 +120,7 @@ async function runScrapeQueue() {
     while (scrapeQueue.length) {
       const eventId = scrapeQueue.shift();
       queuedEventIds.delete(eventId);
+      refreshQueuePositions();
       await scrapeAndStore(eventId);
     }
   } finally {
@@ -111,7 +137,13 @@ async function scrapeAndStore(eventId) {
   console.log(`[scrape] ${event.name}`);
 
   // Set in-memory status so GET /api/prices/:id responds immediately
-  scrapeStatus[eventId] = { running: true, startedAt: new Date().toISOString(), completed: 0, total: TOTAL_PLATFORMS };
+  scrapeStatus[eventId] = {
+    running: true,
+    queued: false,
+    startedAt: new Date().toISOString(),
+    completed: 0,
+    total: TOTAL_PLATFORMS,
+  };
 
   // Write "scraping started" to db so frontend sees it on first poll even before
   // any platform finishes
@@ -120,6 +152,8 @@ async function scrapeAndStore(eventId) {
     lastUpdated: new Date().toISOString(),
     prices: existing ? existing.prices : [],
     scrapingInProgress: true,
+    queued: false,
+    queuePosition: 0,
     completedPlatforms: 0,
     totalPlatforms: TOTAL_PLATFORMS,
   });
@@ -143,6 +177,8 @@ async function scrapeAndStore(eventId) {
         lastUpdated: new Date().toISOString(),
         prices: currentPrices,
         scrapingInProgress: completed < TOTAL_PLATFORMS,
+        queued: false,
+        queuePosition: 0,
         completedPlatforms: completed,
         totalPlatforms: TOTAL_PLATFORMS,
       });
@@ -155,10 +191,16 @@ async function scrapeAndStore(eventId) {
     console.error(`[scrape] failed (${event.name}):`, err.message);
   } finally {
     // Always mark as finished
-    scrapeStatus[eventId] = { running: false, completed: TOTAL_PLATFORMS, total: TOTAL_PLATFORMS };
+    scrapeStatus[eventId] = { running: false, queued: false, completed: TOTAL_PLATFORMS, total: TOTAL_PLATFORMS };
     const final = db.getPrices(eventId);
     if (final) {
-      db.setPrices(eventId, { ...final, scrapingInProgress: false, completedPlatforms: TOTAL_PLATFORMS });
+      db.setPrices(eventId, {
+        ...final,
+        scrapingInProgress: false,
+        queued: false,
+        queuePosition: 0,
+        completedPlatforms: TOTAL_PLATFORMS,
+      });
     }
     activeScrapeIds.delete(eventId);
   }
@@ -240,7 +282,9 @@ app.get('/api/prices', (_req, res) => {
   // Overlay in-memory status (more current than db during an active scrape)
   for (const [eventId, st] of Object.entries(scrapeStatus)) {
     if (allPrices[eventId]) {
-      allPrices[eventId].scrapingInProgress = st.running;
+      allPrices[eventId].scrapingInProgress = st.running || st.queued;
+      allPrices[eventId].queued = !!st.queued;
+      allPrices[eventId].queuePosition = st.queuePosition || 0;
       allPrices[eventId].completedPlatforms = st.completed;
       allPrices[eventId].totalPlatforms = st.total;
     }
@@ -263,7 +307,9 @@ app.get('/api/prices/:eventId', (req, res) => {
 
   // In-memory status is always fresher than db during an active scrape
   if (st.running !== undefined) {
-    response.scrapingInProgress = st.running;
+    response.scrapingInProgress = st.running || st.queued;
+    response.queued = !!st.queued;
+    response.queuePosition = st.queuePosition || 0;
     response.completedPlatforms = st.completed ?? response.completedPlatforms ?? 0;
     response.totalPlatforms = st.total ?? TOTAL_PLATFORMS;
   }

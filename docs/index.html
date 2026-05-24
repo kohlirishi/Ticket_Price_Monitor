@@ -522,7 +522,7 @@
   function startPolling(eventId) {
     if (eventScrapeState[eventId]?.polling) return; // already polling
     const pollTimer    = setInterval(() => pollEvent(eventId), 3000);
-    const timeoutTimer = setTimeout(() => showTimeout(eventId), 90000);
+    const timeoutTimer = setTimeout(() => showTimeout(eventId), 900000);
     eventScrapeState[eventId] = {
       polling: true,
       pollTimer,
@@ -634,9 +634,15 @@
   // Replaces the old static "Checking prices…" pill with a computed label
   // that reflects the actual scrape state in real time.
   function getStatusLabel(ev, pd) {
-    // Timeout state — scrape took > 90 s with no completion
+    // Timeout state — scrape/queue took > 15 min with no completion
     if (eventScrapeState[ev.id]?.timedOut) {
-      return `<span class="pill-timeout">⚠️ Taking too long &nbsp;<button class="btn-retry" onclick="event.stopPropagation();manualRefresh('${esc(ev.id)}')">Retry</button></span>`;
+      return `<span class="pill-timeout">⚠️ Still running &nbsp;<button class="btn-retry" onclick="event.stopPropagation();manualRefresh('${esc(ev.id)}')">Retry</button></span>`;
+    }
+
+    // Queued on backend — waiting for previous event scrape to finish
+    if (pd && pd.scrapingInProgress && pd.queued) {
+      const pos = pd.queuePosition || 1;
+      return `<span class="pill-loading"><span class="spin">⟳</span> Queued #${pos}</span>`;
     }
 
     // Actively scraping — show live progress count
