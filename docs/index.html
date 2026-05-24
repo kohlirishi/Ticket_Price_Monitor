@@ -139,31 +139,54 @@
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
     .cd{font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
 
-    /* ── Event card ──────────────────────────────────────── */
-    .events{display:flex;flex-direction:column;gap:24px}
+    /* ── Event card (accordion) ──────────────────────────── */
+    .events{display:flex;flex-direction:column;gap:12px}
     .event-card{
       background:var(--card);border:1px solid var(--border);
-      border-radius:16px;overflow:hidden;box-shadow:var(--shadow);
+      border-radius:14px;overflow:hidden;box-shadow:var(--shadow);
       animation:slideIn .3s ease;
     }
-    @keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-    .ev-hdr{
-      padding:16px 20px;display:flex;align-items:flex-start;
-      justify-content:space-between;gap:16px;flex-wrap:wrap;
-      background:var(--card2);border-bottom:1px solid var(--border);
+    @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+    /* Clickable summary row */
+    .ev-summary{
+      padding:14px 18px;display:flex;align-items:center;
+      justify-content:space-between;gap:12px;cursor:pointer;
+      background:var(--card2);transition:background .18s;
+      user-select:none;
     }
-    .ev-name{font-size:1rem;font-weight:700;margin-bottom:4px}
+    .ev-summary:hover{background:var(--accent-dim)}
+    .ev-sum-left{display:flex;align-items:center;gap:11px;flex:1;min-width:0}
+    .ev-icon{font-size:1.35rem;flex-shrink:0;line-height:1}
+    .ev-name{font-size:.94rem;font-weight:700;margin-bottom:3px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:480px}
     .ev-meta{
-      font-size:.77rem;color:var(--muted);
-      display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+      font-size:.73rem;color:var(--muted);
+      display:flex;align-items:center;gap:10px;flex-wrap:wrap;
     }
-    .ev-right{text-align:right;flex-shrink:0}
+    .ev-sum-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+
+    /* Chevron */
+    .chevron{
+      font-size:1rem;color:var(--muted);flex-shrink:0;
+      transition:transform .3s ease;display:inline-block;
+    }
+    .event-card.open .chevron{transform:rotate(180deg)}
+
+    /* Collapsible body */
+    .ev-body{
+      max-height:0;overflow:hidden;
+      transition:max-height .38s cubic-bezier(.4,0,.2,1);
+    }
+    .event-card.open .ev-body{max-height:3000px}
+    .ev-body-meta{
+      padding:9px 18px;display:flex;align-items:center;
+      justify-content:space-between;border-bottom:1px solid var(--border);
+      flex-wrap:wrap;gap:8px;
+    }
     .ev-ts{font-size:.72rem;color:var(--muted)}
     .ev-ts.stale{color:var(--red)}
-    .ev-acts{
-      display:flex;align-items:center;gap:7px;
-      margin-top:8px;justify-content:flex-end;
-    }
+    .ev-acts{display:flex;align-items:center;gap:7px}
     .btn-sm{
       background:var(--card2);border:1px solid var(--border);
       border-radius:8px;padding:5px 11px;font-size:.77rem;
@@ -173,6 +196,17 @@
     .btn-sm:hover{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
     .btn-sm.danger:hover{background:var(--red-dim);border-color:var(--red);color:var(--red)}
     .btn-sm:disabled{opacity:.45;cursor:not-allowed}
+
+    /* Best-price pill (shown in collapsed header) */
+    .pill-best{
+      display:flex;align-items:center;gap:6px;
+      background:var(--gold-dim);border:1px solid var(--gold);
+      color:var(--gold);border-radius:20px;padding:4px 11px;
+      font-size:.76rem;font-weight:700;white-space:nowrap;
+    }
+    .pill-plat{font-weight:400;opacity:.75;font-size:.7rem}
+    .pill-chk{color:var(--muted);font-size:.75rem;white-space:nowrap}
+    .pill-na{color:var(--muted);font-size:.75rem;white-space:nowrap}
 
     /* ── Price table ─────────────────────────────────────── */
     .tbl-wrap{overflow-x:auto}
@@ -368,10 +402,11 @@
   const API_BASE = 'https://ticket-price-monitor.onrender.com';
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let events  = [];
-  let prices  = {};
-  let cdSec   = 60;
-  let cdTimer = null;
+  let events        = [];
+  let prices        = {};
+  let cdSec         = 60;
+  let cdTimer       = null;
+  let expandedCards = new Set(); // tracks which event IDs are expanded
 
   // ── Theme ─────────────────────────────────────────────────────────────────
   function toggleTheme() {
@@ -481,9 +516,34 @@
     list.innerHTML = events.map(renderEvent).join('');
   }
 
+  // Toggle card open/closed without full re-render
+  function toggleEvent(id) {
+    const card = document.getElementById('card-' + id);
+    if (!card) return;
+    const opening = card.classList.toggle('open');
+    if (opening) expandedCards.add(id); else expandedCards.delete(id);
+  }
+
+  // Best-price pill shown in collapsed header
+  function getBestPill(pd) {
+    if (!pd || !pd.prices) return '<span class="pill-chk">⏳ Checking prices…</span>';
+    const avail = (pd.prices || []).filter(p => p.status === 'available' && p.price != null);
+    if (!avail.length) return '<span class="pill-na">No prices found</span>';
+    const best = avail.reduce((a, b) => cmpPrice(a) <= cmpPrice(b) ? a : b);
+    const disp = best.currency === 'USD' && best.priceCAD
+      ? `≈ CAD $${best.priceCAD.toFixed(0)}`
+      : `$${best.price.toFixed(0)} CAD`;
+    return `<div class="pill-best">🥇 ${disp} <span class="pill-plat">${esc(best.name)}</span></div>`;
+  }
+
   function renderEvent(ev) {
-    const pd = prices[ev.id];
-    const lu = pd ? new Date(pd.lastUpdated) : null;
+    const pd    = prices[ev.id];
+    const isOpen = expandedCards.has(ev.id);
+    const isFifa = /fifa|world cup/i.test(ev.name);
+    const icon   = isFifa ? '⚽' : '🎟';
+
+    // Timestamp for body
+    const lu   = pd ? new Date(pd.lastUpdated) : null;
     const mins = lu ? Math.floor((Date.now() - lu) / 60000) : null;
     const stale = mins !== null && mins > 30;
     let ts = 'Not yet checked';
@@ -495,38 +555,48 @@
     const rows = pd ? buildRows(pd.prices, ev) : skeletonRows();
 
     return `
-      <div class="event-card" id="card-${esc(ev.id)}">
-        <div class="ev-hdr">
-          <div>
-            <div class="ev-name">${esc(ev.name)}</div>
-            <div class="ev-meta">
-              <span>📍 ${esc(ev.venue)}</span>
-              <span>📅 ${esc(ev.date)}</span>
+      <div class="event-card${isOpen ? ' open' : ''}" id="card-${esc(ev.id)}">
+
+        <!-- Always-visible summary strip (clickable) -->
+        <div class="ev-summary" onclick="toggleEvent('${esc(ev.id)}')">
+          <div class="ev-sum-left">
+            <span class="ev-icon">${icon}</span>
+            <div style="min-width:0">
+              <div class="ev-name">${esc(ev.name)}</div>
+              <div class="ev-meta">
+                <span>📍 ${esc(ev.venue)}</span>
+                <span>📅 ${esc(ev.date)}</span>
+              </div>
             </div>
           </div>
-          <div class="ev-right">
-            <div class="ev-ts${stale ? ' stale' : ''}">${ts}</div>
+          <div class="ev-sum-right">
+            ${getBestPill(pd)}
+            <span class="chevron">▾</span>
+          </div>
+        </div>
+
+        <!-- Collapsible body -->
+        <div class="ev-body">
+          <div class="ev-body-meta">
+            <span class="ev-ts${stale ? ' stale' : ''}">${ts}</span>
             <div class="ev-acts">
               <button class="btn-sm" onclick="forceRefresh('${esc(ev.id)}',this)">↺ Refresh</button>
               <button class="btn-sm danger" onclick="removeEvent('${esc(ev.id)}')">✕ Remove</button>
             </div>
           </div>
+          <div class="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>Platform</th><th>Price</th>
+                  <th>Currency</th><th>Updated</th><th>Book Now</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
         </div>
-        <div class="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Platform</th>
-                <th>Price</th>
-                <th>Currency</th>
-                <th>Updated</th>
-                <th>Book Now</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
+
       </div>`;
   }
 
