@@ -668,21 +668,15 @@ async function scrapeEvent(event) {
   ];
 
   let browser;
-  const results = [];
   try {
     browser = await launchBrowser();
-    for (let i = 0; i < scrapers.length; i++) {
-      try {
-        results.push(await scrapers[i](browser));
-      } catch (err) {
-        console.error(`Scraper ${i} threw:`, err.message);
-      }
-      if (i < scrapers.length - 1) await sleep(DELAY_BETWEEN_SITES_MS);
-    }
+    const settled = await Promise.allSettled(scrapers.map(fn => fn(browser)));
+    return settled
+      .map(r => r.status === 'fulfilled' ? r.value : null)
+      .filter(Boolean);
   } finally {
     if (browser) await browser.close().catch(err => console.error('Browser close:', err.message));
   }
-  return results;
 }
 
 module.exports = { scrapeEvent };
