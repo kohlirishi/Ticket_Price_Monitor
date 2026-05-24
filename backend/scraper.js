@@ -1,3 +1,5 @@
+const https = require('https');
+const http = require('http');
 const puppeteerExtra = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteerExtra.use(StealthPlugin());
@@ -7,6 +9,32 @@ const DELAY_BETWEEN_SITES_MS = 5000;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Plain HTTP fetch — no Puppeteer, works for SSR/API endpoints
+function fetchUrl(url, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https') ? https : http;
+    const req = client.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-CA,en;q=0.9',
+        ...extraHeaders,
+      },
+      timeout: 15000,
+    }, res => {
+      // Follow redirects
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        return fetchUrl(res.headers.location, extraHeaders).then(resolve).catch(reject);
+      }
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+  });
 }
 
 async function launchBrowser() {
@@ -122,53 +150,74 @@ async function isBlocked(page) {
 // ─── Ticketmaster CA ────────────────────────────────────────────────────────
 async function scrapeTicketmaster(browser, event) {
   const meta = { name: 'Ticketmaster', platform: 'ticketmaster', currency: 'CAD', url: event.ticketmasterUrl };
+
+  // Step 1: plain HTTP fetch — fast, no bot detection for initial HTML
+  try {
+    const { body } = await fetchUrl(event.ticketmasterUrl);
+
+    // JSON-LD (most reliable — TM embeds structured event data)
+    const jsonLdPrice = extractJsonLdPrice(body);
+    if (jsonLdPrice) {
+      console.log('[Ticketmaster] JSON-LD price:', jsonLdPrice);
+      return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
+    }
+
+    // __NEXT_DATA__ or embedded JSON price patterns
+    const patterns = [
+      /"minPrice"\s*:\s*([\d.]+)/,
+      /"lowestPrice"\s*:\s*([\d.]+)/,
+      /"startingPrice"\s*:\s*([\d.]+)/,
+      /"basePrice"\s*:\s*([\d.]+)/,
+      /from\s+\$\s*([\d,]+)/i,
+      /"price"\s*:\s*"?([\d.]+)"?/,
+    ];
+    for (const rx of patterns) {
+      const m = body.match(rx);
+      if (m) {
+        const p = parseFloat(m[1].replace(/,/g, ''));
+        if (p > 0 && p < 25000) {
+          console.log('[Ticketmaster] regex price:', p);
+          return { ...meta, price: p, status: 'available', lastUpdated: new Date().toISOString() };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Ticketmaster] fetch failed, falling back to Puppeteer:', err.message);
+  }
+
+  // Step 2: Puppeteer fallback with stealth
   let page;
   try {
     page = await newPage(browser);
     await page.goto(event.ticketmasterUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-    await sleep(4000);
+    await sleep(5000);
 
-    // 1. JSON-LD structured data (most reliable)
     const html = await page.content();
     const jsonLdPrice = extractJsonLdPrice(html);
-    if (jsonLdPrice) {
-      return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
-    }
+    if (jsonLdPrice) return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
 
-    // 2. DOM selectors + broad text search
     const texts = await page.evaluate(() => {
       const found = [];
-      const selectors = [
+      for (const sel of [
         '[data-testid*="price"]', '[data-tid*="price"]',
         '[class*="price-range"]', '[class*="priceRange"]',
         '[class*="lowest-price"]', '[class*="lowestPrice"]',
         '[class*="ticket-price"]', '[class*="ticketPrice"]',
-        '[aria-label*="from $"]', '[aria-label*="price"]',
-        '.sc-fzoLsD', '.price', '.priceSummary',
-      ];
-      for (const sel of selectors) {
+        '[aria-label*="from $"]', '.price', '.priceSummary',
+      ]) {
         for (const el of document.querySelectorAll(sel)) {
           const t = el.textContent.trim();
           if (t.includes('$') && /\d/.test(t)) found.push(t);
         }
       }
-      // Broad: "from $X" or "starting at $X" in full page text
       const pageText = document.body.innerText;
-      const broadMatches = pageText.match(/(from|starting at|as low as)\s+\$\s*[\d,]+/gi) || [];
-      found.push(...broadMatches);
-      // Also grab any standalone $XXX patterns near "tickets"
-      const ticketMatches = pageText.match(/\$\s*[\d,]+(?:\.\d{2})?\s*(CAD|cad)?/g) || [];
-      found.push(...ticketMatches.slice(0, 10));
+      found.push(...(pageText.match(/(from|starting at|as low as)\s+\$\s*[\d,]+/gi) || []));
+      found.push(...(pageText.match(/\$\s*[\d,]+(?:\.\d{2})?/g) || []).slice(0, 15));
       return found;
     });
 
     const price = extractLowestPrice(texts);
-    return {
-      ...meta, price,
-      status: price ? 'available' : 'unavailable',
-      note: price ? null : 'Visit site to check prices',
-      lastUpdated: new Date().toISOString(),
-    };
+    return { ...meta, price, status: price ? 'available' : 'unavailable', note: price ? null : 'Visit site to check prices', lastUpdated: new Date().toISOString() };
   } catch (err) {
     console.error('[Ticketmaster]', err.message);
     return { ...meta, price: null, status: 'unavailable', note: 'Scrape failed — check manually', lastUpdated: new Date().toISOString() };
@@ -319,54 +368,64 @@ async function scrapeViagogo(browser, event) {
   }
 }
 
-// ─── SeatGeek ────────────────────────────────────────────────────────────────
+// ─── SeatGeek — public JSON API (no key needed for basic queries) ─────────────
 async function scrapeSeatGeek(browser, event) {
-  // Try direct search on SeatGeek with artist name
-  const artistSlug = event.name.toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
-    .trim()
-    .replace(/\s+/g, '-');
   const searchQuery = encodeURIComponent(event.name);
-  const searchUrl = `https://seatgeek.com/search?q=${searchQuery}`;
-  const meta = { name: 'SeatGeek', platform: 'seatgeek', currency: 'CAD', url: searchUrl };
+  const apiUrl = `https://api.seatgeek.com/2/events?q=${searchQuery}&venue.city=Toronto&per_page=10&sort=datetime_local.asc`;
+  const webUrl = `https://seatgeek.com/search?q=${searchQuery}`;
+  const meta = { name: 'SeatGeek', platform: 'seatgeek', currency: 'CAD', url: webUrl };
+
+  // Step 1: SeatGeek public API
+  try {
+    const { status, body } = await fetchUrl(apiUrl, { Accept: 'application/json' });
+    if (status === 200) {
+      const data = JSON.parse(body);
+      const events = (data.events || []).filter(e =>
+        e.stats && (e.stats.lowest_price || e.stats.average_price)
+      );
+      if (events.length > 0) {
+        // Pick closest upcoming event
+        const ev = events[0];
+        const price = ev.stats.lowest_price || ev.stats.average_price;
+        console.log('[SeatGeek] API price:', price, ev.url);
+        return {
+          ...meta,
+          price,
+          url: ev.url || webUrl,
+          status: 'available',
+          lastUpdated: new Date().toISOString(),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[SeatGeek] API failed:', err.message);
+  }
+
+  // Step 2: Puppeteer fallback
   let page;
   try {
     page = await newPage(browser);
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+    await page.goto(webUrl, { waitUntil: 'networkidle2', timeout: 40000 });
     await sleep(4000);
 
-    // 1. JSON-LD
     const html = await page.content();
     const jsonLdPrice = extractJsonLdPrice(html);
-    if (jsonLdPrice) {
-      return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
-    }
+    if (jsonLdPrice) return { ...meta, price: jsonLdPrice, status: 'available', lastUpdated: new Date().toISOString() };
 
-    // 2. DOM + page text
     const texts = await page.evaluate(() => {
       const found = [];
-      for (const sel of [
-        '[data-testid*="price"]', '[class*="price"]', '[class*="Price"]',
-        '[class*="TicketBuy"]', '[class*="event-card"]',
-      ]) {
+      for (const sel of ['[data-testid*="price"]', '[class*="price"]', '[class*="Price"]', '[class*="event-card"]']) {
         for (const el of document.querySelectorAll(sel)) {
           const t = el.textContent.trim();
           if (t.includes('$') && /\d/.test(t)) found.push(t);
         }
       }
-      const pageText = document.body.innerText;
-      const broadMatches = pageText.match(/(from|tickets from|starting)\s+\$\s*[\d,]+/gi) || [];
-      found.push(...broadMatches);
+      found.push(...(document.body.innerText.match(/(from|tickets from|starting)\s+\$\s*[\d,]+/gi) || []));
       return found;
     });
 
     const price = extractLowestPrice(texts);
-    return {
-      ...meta, price,
-      status: price ? 'available' : 'unavailable',
-      note: price ? null : 'Visit site to check prices',
-      lastUpdated: new Date().toISOString(),
-    };
+    return { ...meta, price, status: price ? 'available' : 'unavailable', note: price ? null : 'Visit site to check prices', lastUpdated: new Date().toISOString() };
   } catch (err) {
     console.error('[SeatGeek]', err.message);
     return { ...meta, price: null, status: 'unavailable', note: 'Scrape failed — check manually', lastUpdated: new Date().toISOString() };
