@@ -1,5 +1,7 @@
 node_modules/
 backend/data/db.json
 .env
+mac-scraper/.env
+mac-scraper/node_modules/
 .DS_Store
 *.log

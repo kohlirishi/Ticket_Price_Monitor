@@ -88,42 +88,6 @@
     }
     .conn-err.show{display:block}
 
-    /* ── Add-event panel ─────────────────────────────────── */
-    .add-panel{
-      background:var(--card);border:1px solid var(--border);
-      border-radius:16px;padding:22px;margin-bottom:24px;
-      box-shadow:var(--shadow);
-    }
-    .panel-title{
-      font-size:.95rem;font-weight:700;margin-bottom:16px;
-      display:flex;align-items:center;gap:10px;
-    }
-    .panel-title::before{
-      content:'';width:3px;height:18px;
-      background:var(--accent);border-radius:2px;flex-shrink:0;
-    }
-    .form-row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
-    .fg{display:flex;flex-direction:column;gap:6px;flex:1;min-width:220px}
-    .fg label{
-      font-size:.72rem;font-weight:600;color:var(--muted);
-      text-transform:uppercase;letter-spacing:.06em;
-    }
-    .fg input{
-      background:var(--card2);border:1px solid var(--border);
-      border-radius:10px;padding:10px 14px;font-size:.88rem;
-      color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;width:100%;
-    }
-    .fg input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
-    .fg input::placeholder{color:var(--muted)}
-    .btn-add{
-      background:var(--accent);color:#000;border:none;
-      border-radius:10px;padding:10px 22px;font-size:.88rem;
-      font-weight:700;cursor:pointer;transition:opacity .2s,transform .2s;
-      white-space:nowrap;flex-shrink:0;
-    }
-    .btn-add:hover{opacity:.85;transform:translateY(-1px)}
-    .btn-add:disabled{opacity:.45;cursor:not-allowed;transform:none}
-
     /* ── Status bar ──────────────────────────────────────── */
     .status-bar{
       display:flex;align-items:center;justify-content:space-between;
@@ -194,7 +158,6 @@
       align-items:center;gap:4px;transition:all .2s;
     }
     .btn-sm:hover{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
-    .btn-sm.danger:hover{background:var(--red-dim);border-color:var(--red);color:var(--red)}
     .btn-sm:disabled{opacity:.45;cursor:not-allowed}
 
     /* Status pills shown in collapsed header */
@@ -207,26 +170,6 @@
     .pill-plat{font-weight:400;opacity:.75;font-size:.7rem}
     .pill-chk{color:var(--muted);font-size:.75rem;white-space:nowrap}
     .pill-na{color:var(--muted);font-size:.75rem;white-space:nowrap}
-
-    /* Loading progress pill */
-    .pill-loading{
-      display:flex;align-items:center;gap:5px;
-      color:var(--accent);font-size:.75rem;white-space:nowrap;font-weight:600;
-    }
-    .spin{display:inline-block;animation:spin .9s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-
-    /* Timeout pill */
-    .pill-timeout{
-      display:flex;align-items:center;gap:6px;
-      color:var(--red);font-size:.75rem;white-space:nowrap;
-    }
-    .btn-retry{
-      background:var(--red-dim);border:1px solid var(--red);color:var(--red);
-      border-radius:8px;padding:3px 10px;font-size:.72rem;font-weight:700;
-      cursor:pointer;transition:all .2s;
-    }
-    .btn-retry:hover{background:var(--red);color:#fff}
 
     /* ── Price table ─────────────────────────────────────── */
     .tbl-wrap{overflow-x:auto}
@@ -327,11 +270,7 @@
       .hdr{padding:10px 14px}
       .hdr-title{font-size:1.05rem}
       .main{padding:14px 10px}
-      .add-panel{padding:16px}
-      .form-row{flex-direction:column}
-      .btn-add{width:100%;justify-content:center;text-align:center}
       th,td{padding:9px 10px}
-      .ev-hdr{padding:12px 14px}
     }
   </style>
 </head>
@@ -370,16 +309,16 @@
 <main class="main">
 
   <div class="conn-err" id="connErr">
-    ⚠️ Cannot reach backend at <strong id="apiDisplay"></strong> — make sure it's deployed and the URL is updated in this file.
+    ⚠️ Could not load prices.json — make sure the Mac scraper is running and has pushed at least one update.
   </div>
 
   <!-- Status bar -->
   <div class="status-bar" id="statusBar" style="display:none">
     <div class="s-left">
       <span class="dot"></span>
-      <span id="statusTxt">Connected — prices refresh every 5 min</span>
+      <span id="statusTxt">Prices loaded from local scraper</span>
     </div>
-    <div>Next refresh in <span class="cd" id="cd">5:00</span></div>
+    <div>Last updated: <span class="cd" id="lastUpdatedTxt">—</span></div>
   </div>
 
   <!-- Event list -->
@@ -388,27 +327,23 @@
   <!-- Empty state -->
   <div class="empty" id="emptyState" style="display:none">
     <div class="empty-ico">🎟</div>
-    <div class="empty-t">Add your first event above</div>
-    <div class="empty-s">Paste a Ticketmaster CA URL and we'll track prices across 8 platforms in real time.</div>
+    <div class="empty-t">No events in prices.json</div>
+    <div class="empty-s">Add events to <code>mac-scraper/events.json</code> and restart the scraper.</div>
   </div>
 
 </main>
 
 <script>
-  // ── Config ────────────────────────────────────────────────────────────────
-  const API_BASE = 'https://ticket-price-monitor.onrender.com';
+  // ── Data source ───────────────────────────────────────────────────────────
+  // Reads from ./prices.json — written by the Mac scraper every 5 minutes
+  // and pushed to GitHub. No backend server needed.
+  const PRICES_URL = './prices.json';
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let events        = [];
-  let prices        = {};
-  let cdSec         = 300;
-  let cdTimer       = null;
-  let expandedCards = new Set();
-  let firstScrapeRequested = new Set();
-
-  // Per-event polling state:
-  // { [eventId]: { polling: bool, pollTimer: id, timeoutTimer: id, timedOut: bool } }
-  let eventScrapeState = {};
+  let events          = [];
+  let prices          = {};
+  let fileLastUpdated = null;   // ISO string from prices.json — used to detect new data
+  let expandedCards   = new Set();
 
   // ── Theme ─────────────────────────────────────────────────────────────────
   function toggleTheme() {
@@ -419,192 +354,85 @@
     document.getElementById('themeTxt').textContent = dark ? 'Dark' : 'Light';
   }
 
-  // ── API helpers ───────────────────────────────────────────────────────────
-  async function apiFetch(path, opts = {}) {
-    const res = await fetch(API_BASE + path, { cache: 'no-store', ...opts });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${res.status}`);
-    }
-    return res.json();
-  }
-  const apiGet  = path => apiFetch(path);
-  const apiPost = (path, body) => apiFetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const apiDel  = path => apiFetch(path, { method: 'DELETE' });
-
-  // ── Load all ──────────────────────────────────────────────────────────────
+  // ── Load prices.json ──────────────────────────────────────────────────────
   async function loadAll() {
     try {
-      [events, prices] = await Promise.all([
-        apiGet('/api/events'),
-        apiGet('/api/prices'),
-      ]);
+      // Cache-bust so the browser always fetches the freshest file from GitHub
+      const res = await fetch(PRICES_URL + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+
+      // Populate the events array from prices.json
+      events = (data.events || []).map(e => ({
+        id:              e.id,
+        name:            e.name,
+        date:            e.date,
+        venue:           e.venue,
+        ticketmasterUrl: e.ticketmasterUrl,
+        vividSeatsUrl:   e.vividSeatsUrl || null,
+      }));
+
+      // Populate the prices dict keyed by eventId
+      prices = {};
+      for (const e of (data.events || [])) {
+        prices[e.id] = {
+          lastUpdated:      e.lastUpdated || data.lastUpdated,
+          prices:           e.prices || [],
+          scrapingInProgress: false,
+        };
+      }
+
+      fileLastUpdated = data.lastUpdated;
       document.getElementById('connErr').classList.remove('show');
       render();
-      resetCd();
-      // Start/stop polling based on scraping state for each event
-      for (const ev of events) {
-        const pd = prices[ev.id];
-        if (pd && pd.scrapingInProgress) {
-          startPolling(ev.id);
-        } else if (!pd || !pd.lastUpdated) {
-          ensureFirstScrape(ev.id);
-        } else {
-          stopPolling(ev.id);
-        }
-      }
-    } catch {
+      updateLastUpdatedLabel(data.lastUpdated);
+    } catch (err) {
       document.getElementById('connErr').classList.add('show');
-      document.getElementById('apiDisplay').textContent = API_BASE;
     }
   }
 
-  function ensureFirstScrape(eventId) {
-    if (firstScrapeRequested.has(eventId)) return;
-    firstScrapeRequested.add(eventId);
-    if (!prices[eventId]) prices[eventId] = { prices: [] };
-    prices[eventId].scrapingInProgress = true;
-    prices[eventId].completedPlatforms = 0;
-    prices[eventId].totalPlatforms = 8;
-    updateCard(eventId);
-    apiPost('/api/scrape/' + eventId, {})
-      .then(() => startPolling(eventId))
-      .catch(() => {
-        firstScrapeRequested.delete(eventId);
-        prices[eventId].scrapingInProgress = false;
-        updateCard(eventId);
-      });
-  }
-
-  // ── Remove event ──────────────────────────────────────────────────────────
-  async function removeEvent(id) {
+  // ── Poll for new data every 60 s ──────────────────────────────────────────
+  // If the scraper has pushed a new prices.json (detected by lastUpdated changing),
+  // re-render automatically. No countdown needed — happens transparently.
+  setInterval(async () => {
     try {
-      await apiDel('/api/events/' + id);
-      stopPolling(id);
-      events = events.filter(e => e.id !== id);
-      delete prices[id];
-      delete eventScrapeState[id];
-      render();
-      toast('Event removed', 'ok');
-    } catch (e) { toast('Remove failed: ' + e.message, 'err'); }
-  }
-
-  // ── Force refresh ─────────────────────────────────────────────────────────
-  async function forceRefresh(id, btn) {
-    btn.disabled = true; btn.innerHTML = '⟳ Refreshing…';
-    try {
-      await apiPost('/api/scrape/' + id, {});
-      toast('Scrape started — watching for updates…', 'ok');
-      // Optimistically set scraping state so pill updates immediately
-      if (!prices[id]) prices[id] = { prices: [] };
-      prices[id].scrapingInProgress = true;
-      prices[id].completedPlatforms = 0;
-      prices[id].totalPlatforms = 8;
-      // Reset timeout state if previously timed out
-      if (eventScrapeState[id]) eventScrapeState[id].timedOut = false;
-      updateCard(id);
-      startPolling(id);
-    } catch (e) {
-      toast('Refresh failed: ' + e.message, 'err');
-    } finally {
-      btn.disabled = false; btn.innerHTML = '↺ Refresh';
-    }
-  }
-
-  // ── Polling ───────────────────────────────────────────────────────────────
-  // Polls GET /api/prices/:eventId every 3 seconds while scraping is active.
-  // Surgically updates only the pill and table body — no full re-render.
-
-  function startPolling(eventId) {
-    if (eventScrapeState[eventId]?.polling) return; // already polling
-    const pollTimer    = setInterval(() => pollEvent(eventId), 3000);
-    const timeoutTimer = setTimeout(() => showTimeout(eventId), 900000);
-    eventScrapeState[eventId] = {
-      polling: true,
-      pollTimer,
-      timeoutTimer,
-      timedOut: false,
-    };
-  }
-
-  function stopPolling(eventId) {
-    const st = eventScrapeState[eventId];
-    if (!st) return;
-    if (st.pollTimer)    clearInterval(st.pollTimer);
-    if (st.timeoutTimer) clearTimeout(st.timeoutTimer);
-    if (eventScrapeState[eventId]) {
-      eventScrapeState[eventId].polling = false;
-      eventScrapeState[eventId].pollTimer = null;
-      eventScrapeState[eventId].timeoutTimer = null;
-    }
-  }
-
-  async function pollEvent(eventId) {
-    try {
-      const pd = await apiGet('/api/prices/' + eventId);
-      prices[eventId] = pd;
-      updateCard(eventId);
-      if (!pd.scrapingInProgress) {
-        stopPolling(eventId);
+      const res = await fetch(PRICES_URL + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.lastUpdated && data.lastUpdated !== fileLastUpdated) {
+        // New data available — reload everything silently
+        await loadAll();
+        toast('Prices updated ✓', 'ok');
       }
-    } catch { /* ignore transient poll failures */ }
+    } catch { /* silently ignore transient fetch failures */ }
+  }, 60000);
+
+  // ── Reload button (inside each expanded card) ─────────────────────────────
+  async function forceRefresh(_id, btn) {
+    btn.disabled = true; btn.innerHTML = '⟳ Checking…';
+    await loadAll();
+    btn.disabled = false; btn.innerHTML = '↺ Refresh';
+    toast('Reloaded latest prices', 'ok');
   }
 
-  function showTimeout(eventId) {
-    stopPolling(eventId);
-    if (!eventScrapeState[eventId]) eventScrapeState[eventId] = {};
-    eventScrapeState[eventId].timedOut = true;
-    updateCard(eventId);
+  // ── Remove event notice ───────────────────────────────────────────────────
+  function removeEvent(_id) {
+    toast('To remove events, edit mac-scraper/events.json and restart the scraper.', 'err');
   }
 
-  // Called by the Retry button inside the timeout pill
-  function manualRefresh(eventId) {
-    if (eventScrapeState[eventId]) eventScrapeState[eventId].timedOut = false;
-    if (!prices[eventId]) prices[eventId] = { prices: [] };
-    prices[eventId].scrapingInProgress = true;
-    prices[eventId].completedPlatforms = 0;
-    updateCard(eventId);
-    apiPost('/api/scrape/' + eventId, {})
-      .then(() => startPolling(eventId))
-      .catch(err => toast('Refresh failed: ' + err.message, 'err'));
+  // ── Update the "Last updated" label in the status bar ─────────────────────
+  function updateLastUpdatedLabel(isoStr) {
+    const el = document.getElementById('lastUpdatedTxt');
+    if (!el) return;
+    if (!isoStr) { el.textContent = 'never'; return; }
+    const mins = Math.floor((Date.now() - new Date(isoStr)) / 60000);
+    if (mins === 0) el.textContent = 'just now';
+    else if (mins === 1) el.textContent = '1 min ago';
+    else el.textContent = `${mins} min ago`;
   }
 
-  // ── Surgical card update (no full re-render) ───────────────────────────────
-  // Only updates the status pill and table body — preserves accordion state.
-  function updateCard(eventId) {
-    const pd = prices[eventId];
-    const ev = events.find(e => e.id === eventId);
-    if (!ev) return;
-
-    // Status pill
-    const pillEl = document.getElementById('pill-' + eventId);
-    if (pillEl) pillEl.innerHTML = getStatusLabel(ev, pd);
-
-    // Table body
-    const tbodyEl = document.getElementById('tbody-' + eventId);
-    if (tbodyEl) {
-      const inProgress = pd?.scrapingInProgress || false;
-      tbodyEl.innerHTML = pd ? buildRows(pd.prices, ev, inProgress) : skeletonRows();
-    }
-
-    // Timestamp
-    const tsEl = document.getElementById('ts-' + eventId);
-    if (tsEl && pd && pd.lastUpdated) {
-      const lu   = new Date(pd.lastUpdated);
-      const mins = Math.floor((Date.now() - lu) / 60000);
-      const stale = mins > 30;
-      let ts = mins === 0 ? 'Updated just now'
-             : mins === 1 ? 'Updated 1 min ago'
-             : `Updated ${mins} min ago`;
-      if (stale) ts += ' ⚠️ Stale';
-      tsEl.textContent  = ts;
-      tsEl.className    = 'ev-ts' + (stale ? ' stale' : '');
-    }
-  }
+  // Refresh the "Last updated" label every minute so it stays accurate
+  setInterval(() => updateLastUpdatedLabel(fileLastUpdated), 60000);
 
   // ── Render ────────────────────────────────────────────────────────────────
   function render() {
@@ -630,40 +458,20 @@
     if (opening) expandedCards.add(id); else expandedCards.delete(id);
   }
 
-  // ── Dynamic status label ──────────────────────────────────────────────────
-  // Replaces the old static "Checking prices…" pill with a computed label
-  // that reflects the actual scrape state in real time.
+  // ── Status label (header pill) ────────────────────────────────────────────
   function getStatusLabel(ev, pd) {
-    // Timeout state — scrape/queue took > 15 min with no completion
-    if (eventScrapeState[ev.id]?.timedOut) {
-      return `<span class="pill-timeout">⚠️ Still running &nbsp;<button class="btn-retry" onclick="event.stopPropagation();manualRefresh('${esc(ev.id)}')">Retry</button></span>`;
-    }
-
-    // Queued on backend — waiting for previous event scrape to finish
-    if (pd && pd.scrapingInProgress && pd.queued) {
-      const pos = pd.queuePosition || 1;
-      return `<span class="pill-loading"><span class="spin">⟳</span> Queued #${pos}</span>`;
-    }
-
-    // Actively scraping — show live progress count
-    if (pd && pd.scrapingInProgress) {
-      const done  = pd.completedPlatforms || 0;
-      const total = pd.totalPlatforms    || 8;
-      return `<span class="pill-loading"><span class="spin">⟳</span> ${done}&thinsp;/&thinsp;${total} loaded</span>`;
-    }
-
-    // Never scraped yet (no price record or no attempt timestamp)
+    // No data yet — scraper hasn't run for this event
     if (!pd || !pd.lastUpdated) {
       return `<span class="pill-chk">🕐 Waiting for first scrape…</span>`;
     }
 
-    // Scrape complete — no available prices found
-    const avail = pd.prices.filter(p => p.status === 'available' && p.price != null);
+    // Has data — check if any prices available
+    const avail = (pd.prices || []).filter(p => p.status === 'available' && p.price != null);
     if (!avail.length) {
       return `<span class="pill-na">⚠️ No prices found</span>`;
     }
 
-    // Best price — show in gold pill
+    // Best price in gold pill
     const best = avail.reduce((a, b) => cmpPrice(a) <= cmpPrice(b) ? a : b);
     const disp = best.currency === 'USD' && best.priceCAD
       ? `≈ CAD $${best.priceCAD.toFixed(0)}`
@@ -677,8 +485,8 @@
     const isFifa = /fifa|world cup/i.test(ev.name);
     const icon   = isFifa ? '⚽' : '🎟';
 
-    const lu   = pd && pd.lastUpdated ? new Date(pd.lastUpdated) : null;
-    const mins = lu ? Math.floor((Date.now() - lu) / 60000) : null;
+    const lu    = pd && pd.lastUpdated ? new Date(pd.lastUpdated) : null;
+    const mins  = lu ? Math.floor((Date.now() - lu) / 60000) : null;
     const stale = mins !== null && mins > 30;
     let ts = 'Not yet checked';
     if (mins === 0) ts = 'Updated just now';
@@ -686,8 +494,7 @@
     else if (mins !== null) ts = `Updated ${mins} min ago`;
     if (stale) ts += ' ⚠️ Stale';
 
-    const inProgress = pd?.scrapingInProgress || false;
-    const rows       = pd ? buildRows(pd.prices, ev, inProgress) : skeletonRows();
+    const rows        = pd && pd.prices && pd.prices.length ? buildRows(pd.prices, ev) : skeletonRows();
     const statusLabel = getStatusLabel(ev, pd);
 
     return `
@@ -706,7 +513,7 @@
             </div>
           </div>
           <div class="ev-sum-right">
-            <div id="pill-${esc(ev.id)}">${statusLabel}</div>
+            ${statusLabel}
             <span class="chevron">▾</span>
           </div>
         </div>
@@ -714,10 +521,9 @@
         <!-- Collapsible body -->
         <div class="ev-body">
           <div class="ev-body-meta">
-            <span class="ev-ts${stale ? ' stale' : ''}" id="ts-${esc(ev.id)}">${ts}</span>
+            <span class="ev-ts${stale ? ' stale' : ''}">${ts}</span>
             <div class="ev-acts">
               <button class="btn-sm" onclick="forceRefresh('${esc(ev.id)}',this)">↺ Refresh</button>
-              <button class="btn-sm danger" onclick="removeEvent('${esc(ev.id)}')">✕ Remove</button>
             </div>
           </div>
           <div class="tbl-wrap">
@@ -728,7 +534,7 @@
                   <th>Currency</th><th>Updated</th><th>Book Now</th>
                 </tr>
               </thead>
-              <tbody id="tbody-${esc(ev.id)}">${rows}</tbody>
+              <tbody>${rows}</tbody>
             </table>
           </div>
         </div>
@@ -746,28 +552,15 @@
     return p.currency === 'USD' && p.priceCAD ? p.priceCAD : p.price;
   }
 
-  // ── Table body builder ────────────────────────────────────────────────────
-  // Renders real results for finished platforms, shimmer rows for pending ones.
-  function buildRows(platformPrices, ev, scrapingInProgress) {
-    if (!platformPrices || !platformPrices.length) {
-      return scrapingInProgress ? skeletonRows() : unavailableRows(ev);
-    }
+  function buildRows(platformPrices, ev) {
+    if (!platformPrices || !platformPrices.length) return skeletonRows();
     const sorted = [...platformPrices].sort((a, b) => cmpPrice(a) - cmpPrice(b));
-    let rows = sorted.map((p, i) => renderRow(p, i)).join('');
-
-    if (scrapingInProgress) {
-      const allPlats = ['ticketmaster','stubhub','vividseats','viagogo','seatgeek','gametime','seatpick','ticketsmarter'];
-      const done     = new Set(platformPrices.map(p => p.platform));
-      const pending  = allPlats.filter(p => !done.has(p));
-      if (pending.length) rows += skeletonRowsFor(pending, sorted.length);
-    }
-
-    return rows;
+    return sorted.map((p, i) => renderRow(p, i)).join('');
   }
 
   function renderRow(p, i) {
-    const best   = i === 0 && p.status === 'available' && p.price != null;
-    const abbr   = PLAT_ABBR[p.platform] || p.platform.slice(0,2).toUpperCase();
+    const best    = i === 0 && p.status === 'available' && p.price != null;
+    const abbr    = PLAT_ABBR[p.platform] || p.platform.slice(0,2).toUpperCase();
     const safeUrl = /^https?:\/\//.test(p.url) ? p.url : '#';
 
     let priceHtml, curHtml, bookHtml;
@@ -782,7 +575,8 @@
       curHtml  = p.currency === 'USD' ? 'USD → CAD*' : 'CAD';
       bookHtml = `<a class="btn-book${best?' gold-btn':''}" href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">Book Now →</a>`;
     } else {
-      priceHtml = `<span class="p-na">N/A${p.note ? ' — ' + esc(p.note) : ''}</span>`;
+      const note = p.note || p.status || '';
+      priceHtml = `<span class="p-na">N/A${note ? ' — ' + esc(note) : ''}</span>`;
       curHtml   = '—';
       bookHtml  = `<a class="btn-book na-btn" href="${escAttr(safeUrl)}" target="_blank" rel="noopener noreferrer">Check Manually →</a>`;
     }
@@ -805,17 +599,16 @@
       </tr>`;
   }
 
-  // Full shimmer — used when no data at all
   function skeletonRows() {
     const defs = [
-      { platform:'ticketmaster', abbr:'TM', name:'Ticketmaster' },
-      { platform:'stubhub',      abbr:'SH', name:'StubHub'      },
-      { platform:'vividseats',   abbr:'VS', name:'VividSeats'   },
-      { platform:'viagogo',      abbr:'VG', name:'Viagogo'      },
-      { platform:'seatgeek',     abbr:'SG', name:'SeatGeek'     },
-      { platform:'gametime',     abbr:'GT', name:'Gametime'     },
-      { platform:'seatpick',     abbr:'SP', name:'SeatPick'     },
-      { platform:'ticketsmarter',abbr:'TS', name:'TicketSmarter'},
+      {platform:'ticketmaster',abbr:'TM',name:'Ticketmaster'},
+      {platform:'stubhub',     abbr:'SH',name:'StubHub'},
+      {platform:'vividseats',  abbr:'VS',name:'VividSeats'},
+      {platform:'viagogo',     abbr:'VG',name:'Viagogo'},
+      {platform:'seatgeek',    abbr:'SG',name:'SeatGeek'},
+      {platform:'gametime',    abbr:'GT',name:'Gametime'},
+      {platform:'seatpick',    abbr:'SP',name:'SeatPick'},
+      {platform:'ticketsmarter',abbr:'TS',name:'TicketSmarter'},
     ];
     return defs.map((d, i) => `
       <tr>
@@ -831,73 +624,7 @@
       </tr>`).join('');
   }
 
-  function unavailableRows(ev) {
-    const query = encodeURIComponent(ev.name + ' Toronto');
-    const defs = [
-      { platform:'ticketmaster', name:'Ticketmaster', url:ev.ticketmasterUrl || `https://www.ticketmaster.ca/search?q=${query}` },
-      { platform:'stubhub', name:'StubHub', url:`https://www.stubhub.ca/search?q=${query}` },
-      { platform:'vividseats', name:'VividSeats', url:ev.vividSeatsUrl || `https://www.vividseats.com/search?searchTerm=${query}` },
-      { platform:'viagogo', name:'Viagogo', url:`https://www.viagogo.ca/search?q=${query}` },
-      { platform:'seatgeek', name:'SeatGeek', url:`https://seatgeek.com/search?q=${query}` },
-      { platform:'gametime', name:'Gametime', url:`https://gametime.co/search?query=${query}` },
-      { platform:'seatpick', name:'SeatPick', url:`https://seatpick.com/search?q=${query}` },
-      { platform:'ticketsmarter', name:'TicketSmarter', url:`https://www.ticketsmarter.com/search?q=${query}` },
-    ];
-    return defs.map((d, i) => renderRow({
-      ...d,
-      price: null,
-      status: 'unavailable',
-      currency: 'CAD',
-      note: 'No scraped price yet',
-      lastUpdated: null,
-    }, i)).join('');
-  }
-
-  // Partial shimmer — for platforms not yet finished during active scrape
-  function skeletonRowsFor(platforms, startRank) {
-    const DEFS = {
-      ticketmaster:{name:'Ticketmaster',abbr:'TM'}, stubhub:{name:'StubHub',abbr:'SH'},
-      vividseats:{name:'VividSeats',abbr:'VS'},     viagogo:{name:'Viagogo',abbr:'VG'},
-      seatgeek:{name:'SeatGeek',abbr:'SG'},         gametime:{name:'Gametime',abbr:'GT'},
-      seatpick:{name:'SeatPick',abbr:'SP'},         ticketsmarter:{name:'TicketSmarter',abbr:'TS'},
-    };
-    return platforms.map((plat, i) => {
-      const d = DEFS[plat] || { name: plat, abbr: plat.slice(0,2).toUpperCase() };
-      return `
-        <tr>
-          <td><div class="rank">${startRank + i + 1}</div></td>
-          <td><div class="plat-cell">
-            <div class="plat-ico ${plat}">${d.abbr}</div>
-            <span class="plat-name">${d.name}</span>
-          </div></td>
-          <td><div class="sh" style="width:80px"></div></td>
-          <td><div class="sh" style="width:38px"></div></td>
-          <td><div class="sh" style="width:55px"></div></td>
-          <td><div class="sh" style="width:90px"></div></td>
-        </tr>`;
-    }).join('');
-  }
-
-  // ── Countdown ─────────────────────────────────────────────────────────────
-  function resetCd() {
-    cdSec = 300;
-    if (!cdTimer) cdTimer = setInterval(tickCd, 1000);
-    drawCd();
-  }
-  function tickCd() {
-    cdSec--;
-    if (cdSec <= 0) { cdSec = 300; loadAll(); }
-    drawCd();
-  }
-  function drawCd() {
-    const el = document.getElementById('cd');
-    if (!el) return;
-    const m = Math.floor(cdSec / 60);
-    const s = cdSec % 60;
-    el.textContent = `${m}:${String(s).padStart(2,'0')}`;
-  }
-
-  // ── Toast ─────────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
   function toast(msg, type='err') {
     document.querySelector('.toast')?.remove();
     const el = document.createElement('div');
@@ -907,7 +634,6 @@
     setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(),300); }, 3800);
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   function esc(s) {
     return String(s ?? '')
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -923,7 +649,6 @@
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
-  document.getElementById('apiDisplay').textContent = API_BASE;
   loadAll();
 </script>
 </body>

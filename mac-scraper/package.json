@@ -1,0 +1,21 @@
+{
+  "name": "toronto-ticket-tracker-mac-scraper",
+  "version": "1.0.0",
+  "description": "Mac-local price scraper for Toronto Ticket Tracker — runs on your home Mac with a residential IP",
+  "main": "scraper-runner.js",
+  "scripts": {
+    "start": "node scraper-runner.js",
+    "start:bg": "pm2 start scraper-runner.js --name ticket-tracker",
+    "stop:bg": "pm2 stop ticket-tracker",
+    "logs:bg": "pm2 logs ticket-tracker"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "notes": {
+    "scraper-deps": "Puppeteer and scraper dependencies live in ../backend/package.json — start.sh installs both"
+  }
+}
